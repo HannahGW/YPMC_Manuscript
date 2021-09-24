@@ -1,0 +1,496 @@
+---
+title: "vtm_shrubs"
+author: "Leana Goetze"
+date: "1/5/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE)
+```
+
+# attach packages
+```{r}
+library(tidyverse)
+library(janitor)
+library(here)
+library(kableExtra)
+
+```
+
+# Read in final list of YPMC plots 
+```{r}
+vtm_plots <- read.table(here::here("vtm_data", "vtm_dataset_750m_buffer_FINAL.txt"))%>% 
+  mutate_if(is.numeric, ~replace(., is.na(.), 0))
+
+# check that this is correct
+ypmc_plots <-unique(vtm_plots$plotkey)
+# 195-yes!
+```
+
+# Read in raw brush datasheet
+```{r}
+# load (manipulated) original datasets. Manipulations: The plotkey columns have been deleted from the "brush", "flatbrush", "tree", and "flattrees" datasets and the plotkey values have been placed in quotes on the "plot" datasheet (see notes.docx for more details). --> these manipulated datasheets were accidently deleted. To rerun this code will have to recreate them. 
+
+raw_brush<- read_delim(here("vtm_data", "vtm-plotdata-brush_2.csv"), delim = ",") %>% 
+  janitor::clean_names()
+raw_plot<- read_delim(here("vtm_data","vtm-plotdata-plot_2.csv"), delim = ",") %>% 
+  janitor::clean_names() 
+
+# remove quotation marks around the values in the plotkey column on the plot datasheet
+original_plot<- raw_plot %>% 
+  mutate(new_plotkey = (str_remove(plotkey, pattern = '"'))) %>% 
+  select(-plotkey) %>% 
+  mutate(plotkey = (str_remove(new_plotkey, pattern = '"'))) %>% 
+  select(-new_plotkey)
+
+# reorder columns
+original_plot <-original_plot [,c(40, 1:39)]
+
+# create df representing "pid" and corresponding "plotkeys" values
+pid_plotkey <- original_plot %>% 
+  select(pid, plotkey)
+
+# match pid column with corresponding plotkeys values in original datasets
+# reorder columns
+original_brush<- raw_brush %>% 
+  left_join(pid_plotkey, by = "pid")
+original_brush<-original_brush[,c(20, 1:19)]
+```
+
+# Filter brush dataframe for YPMC plots of interest
+```{r}
+ypmc_brush <- original_brush %>% 
+  filter (plotkey %in% ypmc_plots)
+
+unique(ypmc_brush$plotkey)
+# we have brush data on 182 plots out of 195 plots
+```
+
+# filter brush dataframe for only shrub species
+```{r}
+# filter out anything but shrubs
+# NOTE: quercus wislizenii has been included wih shrubs (can be either a shrub or tree)
+filtered_ypmc_brush <- ypmc_brush %>% filter(!code %in% c("Lit", "X", "Gr", "Lit, Conifer", "Lit, Cp", "Lit, S, W1", "Lit, Con", "Lit, BS", "Lit, Cl", "Lit, Jo", "Lit, S, C", "Lit, W1", "Lit, Popu", "Lit, I", "Lit, SP, JP", "Lit, Sp, Yp", "Lit, Y, W1", "W1", "Acg", "I", "Fern", "BS", "Pta", "Lit, C", "Lit, B", "Lit, W", "Lit, Oak")) %>% 
+  filter(!genus %in% c("pinus", "grass", "barren")) %>% 
+  filter(!lifeform %in% c("rock")) %>% 
+  filter(!name %in% c("Unmatched species code"))
+
+# convert to lowercase species names
+filtered_ypmc_brush$name = tolower(filtered_ypmc_brush$name)
+
+# attach common names and further filter out species that are not shrubs
+final_ypmc_brush <-filtered_ypmc_brush %>% 
+  mutate(common_name = case_when(name == "adenostoma fasciculatum " ~ "chamise, greasewood,huutah",
+                                 name == "amelanchier alnifolia " ~ "saskatoon, pacific serviceberry, western serviceberry, alder-leaf shadbush, dwarf shadbush, chuckley pear, western juneberry",
+                                 name == "amorpha californica " ~ "california false indigo",
+                                 name == "arctostaphylos canescens " ~ "hoary manzanita",
+                                 name == "arctostaphylos drupacea " ~ "pinkbracted manzanita",
+                                 name == "arctostaphylos glandulosa " ~ "eastwood manzanita",
+                                 name == "arctostaphylos glauca " ~ "bigberry manzanita",
+                                 name == "arctostaphylos parryana pinetorum" ~ "parry manzanita",
+                                 name == "arctostaphylos parryana " ~ "parry manzanita",
+                                 name == "arctostaphylos pungens " ~ "pointleaf manzanita",
+                                 name == "arctostaphylos tomentosa " ~ "woolly leaf manzanita",
+                                 name == "artemisia tridentata " ~ "big sagebrush",
+                                 name == "artemisia tridentata parishii or apocynum androsaemifolium pumilum" ~ "big sagebrush or spreading dogbane",
+                                 name == "balsamorhiza sagittata " ~ "remove",
+                                 name == "castanopsis sempervirens " ~ "bush chinquapin",
+                                 name == "ceanothus cordulatus " ~ "mountain whitethorn",
+                                 name == "ceanothus divaricatus " ~ "hairy ceanothus",
+                                 name == "ceanothus greggii " ~ "desert ceanothus",
+                                 name == "ceanothus integerrimus " ~ "deer brush",
+                                 name == "ceanothus prostratus " ~ "prostrate ceanothus",
+                                 name == "cercocarpus betuloides " ~ "mountain mahogany",
+                                 name == "cercocarpus ledifolius " ~ "curl-leaf mountain mahogany",
+                                 name == "chrysothamnus nauseosus " ~ "Chamisa, rubber rabbitbrush,gray rabbitbrush",
+                                 name == "clematis pauciflora " ~ "remove",
+                                 name == "encelia actoni " ~ "acton brittlebush, acton encelia",
+                                 name == "eriogonum fasciculatum " ~ "california buckwheat",
+                                 name == "eriogonum kennedyi " ~ "remove",
+                                 name == "eriogonum sp. " ~ "wild buckwheat?",
+                                 name == "fremontia californica " ~ "california flannelbush",
+                                 name == "garrya veatchii " ~ "canyon silktasse, Veatch silktassel",
+                                 name == "holodiscus discolor " ~ "oceanspray, creambush, ironwood",
+                                 name == "leptodactylon pungens " ~ "granite prickly-phlox, granite gilia",
+                                 name == "lonicera conjugialis " ~ "purpleflower honeysuckle",
+                                 name == "lupinus sp. " ~ "remove",
+                                 name == "prunus emarginata " ~ "bitter cherry, oregon cherry",
+                                 name == "prunus ilicifolia " ~ "hollyleaf cherry, evergreen cherry",
+                                 name == "rhamnus californica " ~ "california coffeeberry, california buckthorn",
+                                 name == "rhus trilobata " ~ "skunkbush sumac, sourberry, skunkbush, Squawbush, three-leaf sumac",
+                                 name == "ribes cereum " ~ "wax currant",
+                                 name == "ribes nevadense " ~ "sierra currant, mountain pink currant",
+                                 name == "ribes roezlii " ~ "sierra gooseberry",
+                                 name == "ribes sp. " ~ "currants, gooseberries",
+                                 name == "salix sp. " ~ "remove",
+                                 name == "salvia carnosa " ~ "purple sage",
+                                 name == "salvia carnosa compacta" ~ "purple sage??",
+                                 name == "salvia palmeri " ~ "remove",
+                                 name == "symphoricarpos mollis " ~ "creeping snowberry, southern california snowberry,trip vine",
+                                 name == "quercus wislizenii " ~ "Interior live oak",
+                                 name == "quercus dumosa " ~ "coastal sage scrub oak",
+                                 name == "quercus chrysolepis " ~ "canyon live oak",
+                                 name == "quercus kelloggii  " ~ "california black oak",
+                                 name == "quercus agrifolia  " ~ "coast live oak",
+                                 TRUE ~ "none")) %>% 
+  filter(!common_name == "remove")
+
+# rename Castanopsis sempervirens to Chrysolepis sempervirens 
+final_ypmc_brush$genus[final_ypmc_brush$genus == "castanopsis"] <-"chrysolepis"
+final_ypmc_brush$name[final_ypmc_brush$name == "castanopsis sempervirens "] <-"chrysolepis sempervirens"
+
+
+# check stats on final shrub list in YPMC plots
+unique(final_ypmc_brush$plotkey) 
+unique(final_ypmc_brush$code) 
+# 138/195 plots
+# 47 shrub species
+
+# create list of shrubs
+list <- final_ypmc_brush %>% 
+  select(name, common_name) 
+# make kable table
+  list %>% 
+    kable(col.names = c("Scientific Name", 
+                      "Common Name")) %>% 
+  kable_styling(bootstrap_options = "bordered", 
+                full_width = F,
+                position = "left") 
+  # save_kable("shrubs.png")
+```
+
+# filter final shrubs dataframe to make more manageable
+```{r}
+final_shrubs <- final_ypmc_brush %>% 
+  select(plotkey, code, percent, genus, species, name, common_name) %>% 
+  mutate_if(is.numeric, ~replace(., is.na(.), 0))
+# NOTE: A percent of "0" means the percent is unknown. It was marked as "NA"
+```
+
+# attach plot (and additional) data
+```{r}
+# select columns of interest from plot data and filter for plotkeys of interest (plots in YPMC buffer)
+plot_subset<-vtm_plots %>% 
+  select(plotkey, national_forest, national_forest_name, private_land, state_park, wilderness, range, elevation, exposure, slope_percent, date, notes, latitude, longitude) %>% 
+   filter(plotkey %in% final_shrubs$plotkey)
+
+# delete duplicate rows
+plot_subset_final <-unique(plot_subset)
+
+unique(plot_subset_final$plotkey)
+#138-yes!
+
+combined_shrub_data <-final_shrubs %>% 
+  full_join(plot_subset_final, by = "plotkey")
+
+sum(combined_shrub_data$percent)
+# 2717 total subplots recorded (not including NA)
+```
+
+# total species dominance
+```{r}
+total_species_dominance <-combined_shrub_data %>% 
+  group_by(common_name, name) %>% 
+  summarise(total_count = sum(percent)) 
+
+#check class
+class(total_species_dominance$total_count)
+# numeric
+
+# sort by descending order
+sorted <-total_species_dominance[order(-total_species_dominance$total_count),]
+
+# create percent column
+shrub_dataframe <-sorted %>% 
+  mutate(percent = ((total_count/(sum(total_species_dominance$total_count))))*100)
+
+# sum(total_species_dominance$total_count)
+#2717 total shrub counts
+
+final_shrub_dataframe <-shrub_dataframe
+
+# NOTE: the "percent" column is the percent that the given species dominates the shrub observations, not the percent at which it covers the landscape. For instance: ceanothus cordulatus made up 371 of the 2717 subplots dominated by shrubs, or 13.7%. 
+```
+
+# Overall top ten dominant shrubs
+```{r}
+# top ten dominant shrubs
+top_ten_overall <-final_shrub_dataframe %>% 
+  head(10) %>% 
+  mutate(percent = round(percent, 2)) %>% 
+  select("common_name", "name", "percent", "total_count" )
+
+# make table
+top_ten_overall %>% 
+    kable(col.names = c("Common Name", 
+                      "Scientific Name",
+                      "Percent Dominance",
+                      "Sample Size")) %>% 
+  kable_styling(bootstrap_options = "bordered", 
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>% 
+  row_spec(4, background = "#CCD5E1") %>%
+  row_spec(6, background = "#CCD5E1") %>%
+  row_spec(8, background = "#CCD5E1") %>% 
+  row_spec(10, background = "#CCD5E1") %>% 
+  row_spec(1, background = "#EAF1FB") %>% 
+  row_spec(3, background = "#EAF1FB") %>% 
+  row_spec(5, background = "#EAF1FB") %>% 
+  row_spec(7, background = "#EAF1FB") %>% 
+  row_spec(9, background = "#EAF1FB")
+  # save_kable("top_ten_species.png")
+```
+
+# top three at each elevation gradient
+```{r}
+# create elevation classes
+elevation_dataset <-combined_shrub_data %>%
+  mutate(elevation_m = (elevation/3.28084))%>% #convert from ft. to m
+  mutate(elevation_class = case_when (elevation_m <= 499 ~ "<499",
+                                    elevation_m > 500 & elevation_m <999.99 ~ "500–999", 
+                                    elevation_m > 1000 & elevation_m <1499.99 ~ "1000–1499",
+                                    elevation_m > 1500 & elevation_m <1999.99 ~ "1500–1999",
+                                    elevation_m > 2000 & elevation_m <2499.99 ~ "2000–2499",
+                                    elevation_m >= "2500" ~ ">2500",
+                                    TRUE ~ "none")) %>% 
+  filter(!plotkey == "163BB28") %>% # no elevation data for this plotkey  
+  filter(!national_forest_name == "N/A") %>% 
+  group_by(elevation_class, common_name, name) %>% 
+  summarise(total_count = sum(percent))
+
+# sum total count for each elevation class
+elevation_dataset_2 <- elevation_dataset %>% 
+  group_by(elevation_class) %>% 
+  mutate(sum = sum(total_count))
+
+# create percent shrub dominance for each elevation class
+elevation_dataset_3 <- elevation_dataset_2 %>% 
+  group_by(elevation_class, common_name) %>% 
+  mutate(percent = (total_count/sum)*100)
+
+# order by descending percent values and select the top greatest values for each elevation class
+elevation_dataset_4 <- elevation_dataset_3 %>% 
+  group_by(elevation_class) %>% 
+  slice_max(order_by = percent, n = 3)
+
+top_five_elevation_class <- elevation_dataset_4 %>% 
+  select(elevation_class, common_name, name, percent, total_count)%>% 
+  mutate(percent = round(percent, 2))
+
+# fix order of elevation bands
+level.order <- c("1000–1499","1500–1999", "2000–2499", ">2500")
+
+top_three_elevation_class <-top_five_elevation_class[order(factor(top_five_elevation_class$elevation_class, levels = level.order)),]
+
+# make table
+top_three_elevation_class %>% 
+    kable(col.names = c("Elevation (m)", 
+                      "Common Name",
+                      "Scientific Name",
+                      "Percent Dominance",
+                      "Sample Size")) %>% 
+  kable_styling(bootstrap_options = "bordered", 
+                full_width = F,
+                position = "left") %>% 
+  row_spec(1, background = "#DBE2E6") %>% 
+  row_spec(2, background = "#DBE2E6") %>%
+  row_spec(3, background = "#DBE2E6") %>%
+  row_spec(4, background = "#BCC2C6") %>% 
+  row_spec(5, background = "#BCC2C6") %>%
+  row_spec(6, background = "#BCC2C6") %>%
+  row_spec(7, background = "#DBE2E6") %>%
+  row_spec(8, background = "#DBE2E6") %>%
+  row_spec(9, background = "#DBE2E6") %>% 
+  row_spec(10, background = "#BCC2C6") %>%
+  row_spec(11, background = "#BCC2C6") %>%
+  row_spec(12, background = "#BCC2C6") 
+  # save_kable("top_three_elevation.png")
+```
+
+# top three from each NF
+```{r}
+nf_dataset <-combined_shrub_data%>% 
+  group_by(national_forest_name, common_name, name) %>% 
+  filter(!national_forest_name == "N/A") %>% 
+  summarise(total_count = sum(percent)) 
+
+# sum total count for each elevation class
+nf_dataset_2 <- nf_dataset %>% 
+  group_by(national_forest_name) %>% 
+  mutate(sum = sum(total_count))
+
+# create percent shrub dominance for each elevation class
+nf_dataset_3 <- nf_dataset_2 %>% 
+  group_by(national_forest_name, common_name) %>% 
+  mutate(percent = (total_count/sum)*100)
+
+# order by descending percent values and select the top greatest values for each elevation class
+nf_dataset_4 <- nf_dataset_3 %>% 
+  group_by(national_forest_name) %>% 
+  slice_max(order_by = percent, n = 3)
+
+top_three_nf <- nf_dataset_4 %>% 
+  select(national_forest_name, common_name, name, percent, total_count)%>% 
+  mutate(percent = round(percent, 2))
+
+# make table
+top_three_nf %>% 
+    kable(col.names = c("National Forest", 
+                      "Common Name",
+                      "Scientific Name",
+                      "Percent Dominance", 
+                      "Sample Size")) %>% 
+  kable_styling(bootstrap_options = "bordered", 
+                full_width = F,
+                position = "left") %>% 
+  row_spec(1, background = "#DBE2E6") %>% 
+  row_spec(2, background = "#DBE2E6") %>%
+  row_spec(3, background = "#DBE2E6") %>%
+  row_spec(4, background = "#BCC2C6") %>%
+  row_spec(5, background = "#BCC2C6") %>% 
+  row_spec(6, background = "#BCC2C6") %>%
+  row_spec(7, background = "#DBE2E6") %>%
+  row_spec(8, background = "#DBE2E6") %>% 
+  row_spec(9, background = "#DBE2E6") %>% 
+  row_spec(10, background = "#BCC2C6") %>%
+  row_spec(11, background = "#BCC2C6") %>% 
+  row_spec(12, background = "#BCC2C6")
+  # save_kable("top_three_nf.png")
+```
+
+# top ten frequenct genuses
+```{r}
+# summarise genuses
+genuses_dataset<- combined_shrub_data %>% 
+  group_by(genus) %>% 
+  summarise(total_count = sum(percent)) 
+
+genuses_dataset_2 <- genuses_dataset %>% 
+  mutate(percent = ((total_count/(sum(genuses_dataset$total_count))))*100)
+
+# reorder column
+final_genuses_dataset<-genuses_dataset_2[order(-genuses_dataset_2$percent),]
+
+# top ten frequent genuses
+top_ten_genuses <-final_genuses_dataset %>% 
+  head(10) %>% 
+  mutate(percent = round(percent, 2)) %>% 
+  select(genus, percent, total_count)
+
+# make table
+top_ten_genuses  %>% 
+    kable(col.names = c("Genus",
+                      "Percent Dominance", 
+                      "Sample Size")) %>% 
+  kable_styling(bootstrap_options = "bordered", 
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>% 
+  row_spec(4, background = "#CCD5E1") %>%
+  row_spec(6, background = "#CCD5E1") %>%
+  row_spec(8, background = "#CCD5E1") %>% 
+  row_spec(10, background = "#CCD5E1") %>% 
+  row_spec(1, background = "#EAF1FB") %>% 
+  row_spec(3, background = "#EAF1FB") %>% 
+  row_spec(5, background = "#EAF1FB") %>% 
+  row_spec(7, background = "#EAF1FB") %>% 
+  row_spec(9, background = "#EAF1FB")  
+  # save_kable("top_ten_genuses.png")
+
+
+# top ten frequent genuses- remove NA
+top_ten_genuses_no_na <-final_genuses_dataset %>% 
+  filter(!genus == "NA") %>% 
+  head(10) %>% 
+  mutate(percent = round(percent, 2)) %>% 
+  select(genus, percent, total_count)
+
+# make table
+top_ten_genuses_no_na  %>% 
+    kable(col.names = c("Genus",
+                      "Percent Dominance", 
+                      "Sample Size")) %>% 
+  kable_styling(bootstrap_options = "bordered", 
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>% 
+  row_spec(4, background = "#CCD5E1") %>%
+  row_spec(6, background = "#CCD5E1") %>%
+  row_spec(8, background = "#CCD5E1") %>% 
+  row_spec(10, background = "#CCD5E1") %>% 
+  row_spec(1, background = "#EAF1FB") %>% 
+  row_spec(3, background = "#EAF1FB") %>% 
+  row_spec(5, background = "#EAF1FB") %>% 
+  row_spec(7, background = "#EAF1FB") %>% 
+  row_spec(9, background = "#EAF1FB")
+  # save_kable("top_ten_genuses_no_na.png")
+
+```
+
+# by elevation and national forest produced way too small of sample sizes--> do genus insead
+# by genus and elevation
+```{r}
+elevation_genus <-combined_shrub_data %>%
+  mutate(elevation_m = (elevation/3.28084))%>% #convert from ft. to m
+  mutate(elevation_class = case_when (elevation_m <= 499 ~ "<499",
+                                    elevation_m > 500 & elevation_m <999.99 ~ "500–999", 
+                                    elevation_m > 1000 & elevation_m <1499.99 ~ "1000–1499",
+                                    elevation_m > 1500 & elevation_m <1999.99 ~ "1500–1999",
+                                    elevation_m > 2000 & elevation_m <2499.99 ~ "2000–2499",
+                                    elevation_m >= "2500" ~ ">2500",
+                                    TRUE ~ "none"))%>% 
+  filter(!plotkey == "163BB28") %>%  # no elevation data for this plotkey  %>% 
+  filter(!national_forest_name == "N/A")%>% 
+  group_by(elevation_class, genus)%>% 
+  summarise(total_count = sum(percent))
+
+# sum total count for each elevation class --> this is not needed
+elevation_genus_2 <- elevation_genus %>% 
+  group_by(elevation_class) %>% 
+  mutate(sum = sum(total_count))
+
+#create percent shrub dominance for each elevation class
+elevation_genus_3 <- elevation_genus_2 %>% 
+  group_by(elevation_class, genus) %>% 
+  mutate(percent = (total_count/sum)*100)
+
+#order by descending percent values and select the top greatest values for each elevation class
+elevation_genus_4 <- elevation_genus_3 %>% 
+  group_by(elevation_class) %>% 
+  slice_max(order_by = percent, n = 3)%>% 
+  select(elevation_class, genus, percent, total_count ) %>%
+  mutate(percent = round(percent, 2)) 
+
+# fix order of elevation bands
+level.order <- c("1000–1499","1500–1999", "2000–2499", ">2500")
+
+elevation_genus_final<-elevation_genus_4[order(factor(elevation_genus_4$elevation_class, levels = level.order)),]
+
+# make table
+top_three_genuses_by_elevation <- elevation_genus_final %>% 
+    kable(col.names = c("Elevation (m)",
+                        "Genus",
+                      "Percent Dominance",
+                      "Sample Size")) %>% 
+  kable_styling(bootstrap_options = "bordered", 
+                full_width = F,
+                position = "left") %>% 
+  row_spec(1, background = "#CCD5E1") %>% 
+  row_spec(2, background = "#CCD5E1") %>%
+  row_spec(3, background = "#CCD5E1") %>%
+  row_spec(4, background = "#EAF1FB") %>% 
+  row_spec(5, background = "#EAF1FB") %>% 
+  row_spec(6, background = "#EAF1FB") %>% 
+  row_spec(7, background = "#CCD5E1") %>% 
+  row_spec(8, background = "#CCD5E1") %>% 
+  row_spec(9, background = "#CCD5E1") %>% 
+  row_spec(10, background = "#EAF1FB") %>% 
+  row_spec(11, background = "#EAF1FB") %>% 
+  row_spec(12, background = "#EAF1FB")
+  # save_kable("top_three_genuses_by_elevation.png")
+
+top_three_genuses_by_elevation
+```
+

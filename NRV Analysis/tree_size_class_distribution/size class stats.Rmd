@@ -1,0 +1,3853 @@
+---
+title: "Tree Size Class Stats"
+author: "AMP"
+date: "12/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=F, warning=F)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(janitor)
+library(effsize)
+library(MASS)
+library(broom)
+library(kableExtra)
+library(MKinfer)
+library(here)
+```
+
+# Data
+```{r, message=F, warning=F}
+fia <- read.csv(here("/FIA Data/Final FIA data and code used for analysis/final_binded_fia_ypmc_data.csv")) 
+vtm <- read_csv(here("/vtm_data/vtm_dataset_750m_buffer_FINAL.csv")) 
+```
+
+# Tidy Data
+```{r, warning=F, message=F}
+###################################### vtm data ######################################
+vtm_tidy <- vtm %>% 
+  pivot_longer('dbh_4_11':'dbh_36',
+               names_to = "dbh_class",
+               values_to = "dbh_count") %>% 
+  filter(dbh_count != 0) %>% # get error when use uncount() and there are rows with a value of 0
+  tidyr::uncount(dbh_count) %>% 
+  mutate(dbh_class = case_when(
+    dbh_class == "dbh_4_11" ~ "10.2–30.4",
+    dbh_class == "dbh_12_23" ~ "30.5–60.9",
+    dbh_class == "dbh_24_35" ~ "61.0–91.3",
+    dbh_class == "dbh_36" ~ "91.4+"
+  )) %>%
+  mutate(dbh_class = as.factor(dbh_class),
+         dbh_class = fct_relevel(dbh_class, levels=c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")))  %>%
+  dplyr::select(-genus, -species) %>% 
+  rename(species = abbreviation) %>% 
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine"),
+         species = str_replace(species, pattern = "PICO3", "PICO")) %>% # change pico3 to pico 
+  mutate(species = fct_relevel(species, levels =c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE"))) %>% 
+  mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(elev_m = elevation/3.281) %>% 
+  mutate(elevation_class = case_when(
+    elev_m < 500 ~ "0-500",
+    elev_m <= 1000 ~ "500-1,000",
+    elev_m <= 1500 ~ "1,000-1,500",
+    elev_m <= 2000 ~ "1,500-2,000",
+    elev_m <= 2500 ~ "2,000-2,500",
+    elev_m >= 2500 ~ "2,500+"
+  )) %>% 
+  mutate(elevation_class = as.factor(elevation_class),
+         elevation_class = fct_relevel(elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+")))
+
+########################################## FIA ########################################### 
+fia_tidy <- fia %>% 
+  filter(!is.na(dbh)) %>% 
+  mutate(dbh_class = case_when(
+    dbh < 10.2 ~ "0–10.2",
+    dbh <= 30.4 ~ "10.2–30.4",
+    dbh <= 60.9 ~ "30.5–60.9",
+    dbh < 91.44 ~ "61.0–91.3",
+    dbh >= 91.44 ~ "91.4+"
+  )) %>%
+  filter(dbh_class != "0–10.2") %>%
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine")) %>% 
+  mutate(wilderness = case_when(
+    reserved %in% c("Y", "Reserved/Wilderness") ~ "Y",
+    reserved %in% c("N", "Not Reserved/Wilderness") ~ "N")) %>% 
+ mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(elevation_class = case_when(elev <= 1500 ~ "1,000-1,500",
+                                     elev <= 2000 ~ "1,500-2,000",
+                                     elev <= 2500 ~ "2,000-2,500",
+                                     elev >= 2500 ~ "2,500+"))
+
+
+
+# fct_relevel wouldn't work properly in mutate() for these two variables in fia data
+fia_tidy$dbh_class <- factor(fia_tidy$dbh_class, levels = c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")) 
+fia_tidy$species <- factor(fia_tidy$species, levels= c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE")) 
+fia_tidy$elevation_class <- factor(fia_tidy$elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+"))
+
+################################## slope corrected area #############################
+
+vtm_slope <- vtm_tidy %>%
+  mutate(slope_decimal = slope_percent/100,
+         slope_corrected_area = 809*cos(atan(slope_decimal))) %>% 
+  dplyr::select(plotkey, slope_corrected_area) %>% 
+  distinct(.keep_all=T) %>%  # remove duplicates
+  mutate(slope_corrected_area = replace_na(slope_corrected_area, 809))
+
+fia_slope <- fia_tidy %>%
+  group_by(join_plot) %>% 
+  mutate(slope_avg = mean(slope)) %>% # some plots had different slopes recorded***
+  mutate(slope_decimal = slope_avg/100,
+         slope_corrected_area = 672.45*cos(atan(slope_decimal)))%>% 
+  dplyr::select(join_plot, slope_corrected_area) %>% 
+  distinct(.keep_all=T) %>% 
+  mutate(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  ungroup()
+
+
+```
+
+# Stats
+
+stats all done for the landscape approach
+
+## Total 
+```{r, include=FALSE}
+##################################### set up data ##################################### 
+vtm_total <- vtm_tidy %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "VTM")
+
+fia_total <- fia_tidy %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") 
+
+total <- rbind(vtm_total, fia_total) 
+
+vtm_total_10_30 <- vtm_total %>%  filter(dbh_class == "x10_2_30_4")
+vtm_total_30_60 <- vtm_total %>%  filter(dbh_class == "x30_5_60_9")
+vtm_total_60_90 <- vtm_total %>%  filter(dbh_class == "x61_0_91_3")
+vtm_total_90 <- vtm_total %>%  filter(dbh_class == "x91_4")
+
+fia_total_10_30 <- fia_total %>%  filter(dbh_class == "x10_2_30_4")
+fia_total_30_60 <- fia_total %>%  filter(dbh_class == "x30_5_60_9")
+fia_total_60_90 <- fia_total %>%  filter(dbh_class == "x61_0_91_3")
+fia_total_90 <- fia_total %>%  filter(dbh_class == "x91_4")
+
+######################################### sample size ##########################################
+vtm_total_n <- nrow(vtm_total)
+fia_total_n <- nrow(fia_total)
+##################################### Check assumptions ############################################
+## assumptions from allisons esm 206 lecture 11
+
+# 1. Continuous observations are randomly drawn from populations --> yes
+
+# 2. data is normally distributed --> sure
+# ggplot(vtm_total, aes(x=stem_density)) + geom_histogram() + facet_wrap(~dbh_class) 
+# ggplot(fia_total, aes(x=stem_density)) + geom_histogram() + facet_wrap(~dbh_class)
+# ggplot(total, aes(x=stem_density, fill = time_frame)) +geom_histogram() + facet_wrap(~dbh_class)
+# 
+# ggplot(vtm_total, aes(sample=stem_density)) + geom_qq() # points kinda curved
+# ggplot(fia_total, aes(sample=stem_density)) + geom_qq() # linear enough?
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+# 3. Equal Variances -> do NOT need to worry about this when using the welch t test (which IS parametric)
+
+# 4. Independent samples and observations --> yes
+
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+# run tests
+total_test_10_30 <- t.test(fia_total_10_30$stem_density, vtm_total_10_30$stem_density, paired = F)
+total_test_30_60 <- t.test(fia_total_30_60$stem_density, vtm_total_30_60$stem_density, paired = F)
+total_test_60_90 <- t.test(fia_total_60_90$stem_density, vtm_total_60_90$stem_density, paired = F )
+total_test_90 <- t.test(fia_total_90$stem_density, vtm_total_90$stem_density, paired = F )
+
+
+# use broom to tidy test summaries
+total_test_summary_10_30 <- broom::tidy(total_test_10_30)
+total_test_summary_30_60 <- broom::tidy(total_test_30_60)
+total_test_summary_60_90 <- broom::tidy(total_test_60_90)
+total_test_summary_90 <- broom::tidy(total_test_90)
+
+# cohens d
+total_effsize_10_30 <- effsize::cohen.d(fia_total_10_30$stem_density, vtm_total_10_30$stem_density)
+total_effsize_30_60 <- effsize::cohen.d(fia_total_30_60$stem_density, vtm_total_30_60$stem_density)
+total_effsize_60_90 <- effsize::cohen.d(fia_total_60_90$stem_density, vtm_total_60_90$stem_density)
+total_effsize_90 <- effsize::cohen.d(fia_total_90$stem_density, vtm_total_90$stem_density)
+
+
+total_effsize_10_30_df <- as.data.frame(total_effsize_10_30$estimate) 
+total_effsize_30_60_df <- as.data.frame(total_effsize_30_60$estimate) 
+total_effsize_60_90_df <- as.data.frame(total_effsize_60_90$estimate) 
+total_effsize_90_df <- as.data.frame(total_effsize_90$estimate) 
+
+######################################## negative binomial #######################################
+
+total_10_30 <- rbind(vtm_total_10_30, fia_total_10_30)
+total_30_60 <- rbind(vtm_total_30_60, fia_total_30_60)
+total_60_90 <- rbind(vtm_total_60_90, fia_total_60_90)
+total_90 <- rbind(vtm_total_90, fia_total_90)
+
+ 
+# model
+total_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = total_10_30)
+summary(total_nb_10_30)
+total_nb_10_30_summary <- broom::tidy(total_nb_10_30)
+
+total_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = total_30_60)
+summary(total_nb_30_60)
+total_nb_30_60_summary <- broom::tidy(total_nb_30_60)
+
+total_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = total_60_90)
+summary(total_nb_60_90)
+total_nb_60_90_summary <- broom::tidy(total_nb_60_90)
+
+total_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = total_90)
+summary(total_nb_90)
+total_nb_90_summary <- broom::tidy(total_nb_90)
+
+```
+havent changed the code to calc negative binomial for size class yet
+
+## Lifeform
+```{r, include=FALSE}
+##################################### set up data ##################################### 
+vtm_lifeform <- vtm_tidy %>% 
+  group_by(plotkey, dbh_class, lifeform) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = stem_density) %>% 
+  mutate(Conifers = replace_na(Conifers, 0),
+         Oaks = replace_na(Oaks, 0)) %>% 
+  pivot_longer(Conifers:Oaks,
+               names_to = "lifeform",
+               values_to = "stem_density") %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_lifeform <- fia_tidy %>% 
+  group_by(join_plot, dbh_class, lifeform) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = stem_density) %>% 
+  mutate(Conifers = replace_na(Conifers, 0),
+         Oaks = replace_na(Oaks, 0)) %>% 
+  pivot_longer(Conifers:Oaks,
+               names_to = "lifeform",
+               values_to = "stem_density") %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>%
+  mutate(time_frame = "FIA") 
+
+
+# sub data for running stats tests
+vtm_lifeform_conifers <- vtm_lifeform %>%  filter(lifeform == "Conifers") 
+vtm_lifeform_oaks <- vtm_lifeform %>%  filter(lifeform == "Oaks") 
+
+fia_lifeform_conifers <- fia_lifeform %>% filter(lifeform == "Conifers") 
+fia_lifeform_oaks <- fia_lifeform %>%  filter(lifeform == "Oaks")
+
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+########## conifers ########
+lifeform_conifer_test_10_30 <- t.test(fia_lifeform_conifers$x10_2_30_4,
+                                      vtm_lifeform_conifers$x10_2_30_4, paired = F)
+lifeform_conifer_test_30_60 <- t.test(fia_lifeform_conifers$x30_5_60_9,
+                                      vtm_lifeform_conifers$x30_5_60_9, paired = F)
+lifeform_conifer_test_60_90 <- t.test(fia_lifeform_conifers$x61_0_91_3,
+                                      vtm_lifeform_conifers$x61_0_91_3, paired = F)
+lifeform_conifer_test_90 <- t.test(fia_lifeform_conifers$x91_4, 
+                                   vtm_lifeform_conifers$x91_4, paired = F)
+
+# test summary
+lifeform_conifer_10_30_test_summary <- broom::tidy(lifeform_conifer_test_10_30)
+lifeform_conifer_30_60_test_summary <- broom::tidy(lifeform_conifer_test_30_60)
+lifeform_conifer_60_90_test_summary <- broom::tidy(lifeform_conifer_test_60_90)
+lifeform_conifer_90_test_summary <- broom::tidy(lifeform_conifer_test_90)
+
+#cohen's d
+lifeform_conifer_10_30_effectsize <- effsize::cohen.d(fia_lifeform_conifers$x10_2_30_4,
+                                                      vtm_lifeform_conifers$x10_2_30_4)
+lifeform_conifer_30_60_effectsize <- effsize::cohen.d(fia_lifeform_conifers$x30_5_60_9,
+                                                      vtm_lifeform_conifers$x30_5_60_9)
+lifeform_conifer_60_90_effectsize <- effsize::cohen.d(fia_lifeform_conifers$x61_0_91_3,
+                                                      vtm_lifeform_conifers$x61_0_91_3)
+lifeform_conifer_90_effectsize <- effsize::cohen.d(fia_lifeform_conifers$x91_4,
+                                                   vtm_lifeform_conifers$x91_4)
+
+lifeform_conifer_10_30_effectsize_df <- as.data.frame(lifeform_conifer_10_30_effectsize$estimate) 
+lifeform_conifer_30_60_effectsize_df <- as.data.frame(lifeform_conifer_30_60_effectsize$estimate) 
+lifeform_conifer_60_90_effectsize_df <- as.data.frame(lifeform_conifer_60_90_effectsize$estimate) 
+lifeform_conifer_90_effectsize_df <- as.data.frame(lifeform_conifer_90_effectsize$estimate) 
+
+###### oaks ######
+lifeform_oaks_test_10_30 <- t.test(fia_lifeform_oaks$x10_2_30_4, vtm_lifeform_oaks$x10_2_30_4, paired = F )
+lifeform_oaks_test_30_60 <- t.test(fia_lifeform_oaks$x30_5_60_9, vtm_lifeform_oaks$x30_5_60_9, paired = F )
+lifeform_oaks_test_60_90 <- t.test(fia_lifeform_oaks$x61_0_91_3, vtm_lifeform_oaks$x61_0_91_3, paired = F )
+lifeform_oaks_test_90 <- t.test(fia_lifeform_oaks$x91_4, vtm_lifeform_oaks$x91_4, paired = F )
+
+# test summary
+lifeform_oaks_10_30_test_summary <- broom::tidy(lifeform_oaks_test_10_30)
+lifeform_oaks_30_60_test_summary <- broom::tidy(lifeform_oaks_test_30_60)
+lifeform_oaks_60_90_test_summary <- broom::tidy(lifeform_oaks_test_60_90)
+lifeform_oaks_90_test_summary <- broom::tidy(lifeform_oaks_test_90)
+
+# cohen's d
+lifeform_oaks_10_30_effectsize <- effsize::cohen.d(fia_lifeform_oaks$x10_2_30_4, vtm_lifeform_oaks$x10_2_30_4)
+lifeform_oaks_30_60_effectsize <- effsize::cohen.d(fia_lifeform_oaks$x30_5_60_9, vtm_lifeform_oaks$x30_5_60_9)
+lifeform_oaks_60_90_effectsize <- effsize::cohen.d(fia_lifeform_oaks$x61_0_91_3, vtm_lifeform_oaks$x61_0_91_3)
+lifeform_oaks_90_effectsize <- effsize::cohen.d(fia_lifeform_oaks$x91_4, vtm_lifeform_oaks$x91_4)
+
+lifeform_oaks_10_30_effectsize_df <- as.data.frame(lifeform_oaks_10_30_effectsize$estimate) 
+lifeform_oaks_30_60_effectsize_df <- as.data.frame(lifeform_oaks_30_60_effectsize$estimate) 
+lifeform_oaks_60_90_effectsize_df <- as.data.frame(lifeform_oaks_60_90_effectsize$estimate) 
+lifeform_oaks_90_effectsize_df <- as.data.frame(lifeform_oaks_90_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+# sub data
+vtm_lifeform1 <- vtm_tidy %>% 
+  group_by(plotkey, dbh_class, lifeform) %>% 
+  tally() %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = n) %>% 
+  mutate(Conifers = replace_na(Conifers, 0),
+         Oaks = replace_na(Oaks, 0)) %>% 
+  pivot_longer(Conifers:Oaks,
+               names_to = "lifeform",
+               values_to = "n") %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  mutate(time_frame = "VTM") %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = 'n') 
+
+fia_lifeform1 <- fia_tidy %>% 
+  group_by(join_plot, dbh_class, lifeform) %>% 
+  tally() %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = n) %>% 
+  mutate(Conifers = replace_na(Conifers, 0),
+         Oaks = replace_na(Oaks, 0)) %>% 
+  pivot_longer(Conifers:Oaks,
+               names_to = "lifeform",
+               values_to = "n") %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>%
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = 'n') %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  mutate(time_frame = "FIA") 
+
+vtm_lifeform1 <- inner_join(vtm_lifeform1, vtm_slope, by = "plotkey")
+fia_lifeform1 <- inner_join(fia_lifeform1, fia_slope, by = "plotkey")
+
+lifeform_bind <- rbind(vtm_lifeform1, fia_lifeform1)
+
+# data for regression
+conifer_10_30 <- lifeform_bind %>% filter(lifeform == "Conifers" & dbh_class == 'x10_2_30_4')
+conifer_30_60 <- lifeform_bind %>% filter(lifeform == "Conifers" & dbh_class == 'x30_5_60_9')
+conifer_60_90 <- lifeform_bind %>% filter(lifeform == "Conifers" & dbh_class == 'x61_0_91_3')
+conifer_90 <- lifeform_bind %>% filter(lifeform == "Conifers" & dbh_class == 'x91_4')
+
+oak_10_30 <- lifeform_bind %>% filter(lifeform == "Oaks" & dbh_class == 'x10_2_30_4')
+oak_30_60 <- lifeform_bind %>% filter(lifeform == "Oaks" & dbh_class == 'x30_5_60_9')
+oak_60_90 <- lifeform_bind %>% filter(lifeform == "Oaks" & dbh_class == 'x61_0_91_3')
+oak_90 <- lifeform_bind %>% filter(lifeform == "Oaks" & dbh_class == 'x91_4')
+
+
+
+######### conifers ######
+conifer_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = conifer_10_30)
+summary(conifer_nb_10_30)
+conifer_nb_10_30_summary <- broom::tidy(conifer_nb_10_30)
+
+conifer_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = conifer_30_60)
+summary(conifer_nb_30_60)
+conifer_nb_30_60_summary <- broom::tidy(conifer_nb_30_60)
+
+conifer_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = conifer_60_90)
+summary(conifer_nb_60_90)
+conifer_nb_60_90_summary <- broom::tidy(conifer_nb_60_90)
+
+conifer_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = conifer_90)
+summary(conifer_nb_90)
+conifer_nb_90_summary <- broom::tidy(conifer_nb_90)
+
+##### model oaks #####
+oak_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = oak_10_30)
+summary(oak_nb_10_30)
+oak_nb_10_30_summary <- broom::tidy(oak_nb_10_30)
+
+oak_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = oak_30_60)
+summary(oak_nb_30_60)
+oak_nb_30_60_summary <- broom::tidy(oak_nb_30_60)
+
+oak_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = oak_60_90)
+summary(oak_nb_60_90)
+oak_nb_60_90_summary <- broom::tidy(oak_nb_60_90)
+
+oak_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = oak_90)
+summary(oak_nb_90)
+oak_nb_90_summary <- broom::tidy(oak_nb_90)
+
+
+##################################### Check assumptions ############################################
+
+ggplot(conifer_10_30, aes(sample=n)) + geom_qq() #
+ggplot(conifer_30_60, aes(sample=n)) + geom_qq() #
+ggplot(conifer_60_90, aes(sample=n)) + geom_qq() #
+ggplot(conifer_90, aes(sample=n)) + geom_qq() #
+
+ggplot(oak_10_30, aes(sample=n)) + geom_qq() #
+ggplot(oak_30_60, aes(sample=n)) + geom_qq() #
+ggplot(oak_60_90, aes(sample=n)) + geom_qq() #
+ggplot(oak_90, aes(sample=n)) + geom_qq() #
+
+```
+
+## species
+
+have to pivot more than once to get the data in the correct landscape scale format
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_species <- vtm_tidy %>% 
+  group_by(plotkey, species, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class', 
+               values_to = 'stem_density') %>% 
+  pivot_wider(names_from = species,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_species <- fia_tidy %>% 
+  group_by(join_plot, species, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class', 
+               values_to = 'stem_density') %>% 
+  pivot_wider(names_from = species,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+species <- dplyr::bind_rows(vtm_species, fia_species) 
+
+# sub data for running stats tests
+vtm_species_10_30 <- vtm_species %>%  filter(dbh_class == "x10_2_30_4")
+vtm_species_30_60 <- vtm_species %>%  filter(dbh_class == "x30_5_60_9")
+vtm_species_60_90 <- vtm_species %>%  filter(dbh_class == "x61_0_91_3")
+vtm_species_90 <- vtm_species %>%  filter(dbh_class == "x91_4")
+
+fia_species_10_30 <- fia_species %>%  filter(dbh_class == "x10_2_30_4")
+fia_species_30_60 <- fia_species %>%  filter(dbh_class == "x30_5_60_9")
+fia_species_60_90 <- fia_species %>%  filter(dbh_class == "x61_0_91_3")
+fia_species_90 <- fia_species %>%  filter(dbh_class == "x91_4")
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ ggplot(vtm_species_10_30, aes(sample=abco)) +geom_qq()  
+ ggplot(fia_species_10_30, aes(sample=abco)) +geom_qq()  
+# ggplot(species, aes(x=pico, fill = time_frame)) +geom_histogram() + facet_wrap(~dbh_class) 
+# ggplot(species, aes(x=pila, fill = time_frame)) +geom_histogram() + facet_wrap(~dbh_class) 
+# ggplot(species, aes(x=yellow_pine, fill = time_frame)) +geom_histogram() + facet_wrap(~dbh_class) 
+# ggplot(species, aes(x=quch, fill = time_frame)) +geom_histogram() + facet_wrap(~dbh_class) 
+# ggplot(species, aes(x=quke, fill = time_frame)) +geom_histogram() + facet_wrap(~dbh_class) 
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+
+############## ABCO ############
+abco_test_10_30 <- boot.t.test(fia_species_10_30$abco, vtm_species_10_30$abco, paired = F )
+abco_test_30_60 <- boot.t.test(fia_species_30_60$abco, vtm_species_30_60$abco, paired = F )
+abco_test_60_90 <- boot.t.test(fia_species_60_90$abco, vtm_species_60_90$abco, paired = F )
+abco_test_90 <- boot.t.test(fia_species_90$abco, vtm_species_90$abco, paired = F )
+
+# test summary
+species_abco_10_30_test_summary <- broom::tidy(abco_test_10_30)
+species_abco_30_60_test_summary <- broom::tidy(abco_test_30_60)
+species_abco_60_90_test_summary <- broom::tidy(abco_test_60_90)
+species_abco_90_test_summary <- broom::tidy(abco_test_90)
+
+#cohen's d
+species_abco_10_30_effectsize <- effsize::cohen.d(fia_species_10_30$abco, vtm_species_10_30$abco)
+species_abco_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$abco, vtm_species_30_60$abco)
+species_abco_60_90_effectsize <- effsize::cohen.d(fia_species_60_90$abco, vtm_species_60_90$abco)
+species_abco_90_effectsize <- effsize::cohen.d(fia_species_90$abco, vtm_species_90$abco)
+
+species_abco_10_30_effectsize_df <- as.data.frame(species_abco_10_30_effectsize$estimate) 
+species_abco_30_60_effectsize_df <- as.data.frame(species_abco_30_60_effectsize$estimate) 
+species_abco_60_90_effectsize_df <- as.data.frame(species_abco_60_90_effectsize$estimate) 
+species_abco_90_effectsize_df <- as.data.frame(species_abco_90_effectsize$estimate) 
+
+########### CADE ##############
+cade_test_10_30 <- boot.t.test(fia_species_10_30$cade, vtm_species_10_30$cade, paired = F )
+cade_test_30_60 <- boot.t.test(fia_species_30_60$cade, vtm_species_30_60$cade, paired = F )
+cade_test_60_90 <- boot.t.test(fia_species_60_90$cade, vtm_species_60_90$cade, paired = F )
+cade_test_90 <- boot.t.test(fia_species_60_90$cade, vtm_species_60_90$cade, paired = F )
+
+# test summary
+species_cade_10_30_test_summary <- broom::tidy(cade_test_10_30)
+species_cade_30_60_test_summary <- broom::tidy(cade_test_30_60)
+species_cade_60_90_test_summary <- broom::tidy(cade_test_60_90)
+species_cade_90_test_summary <- broom::tidy(cade_test_90)
+
+#cohen's d
+species_cade_10_30_effectsize <- effsize::cohen.d(fia_species_10_30$cade, vtm_species_10_30$cade)
+species_cade_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$cade, vtm_species_30_60$cade)
+species_cade_60_90_effectsize <- effsize::cohen.d(fia_species_60_90$cade, vtm_species_60_90$cade)
+species_cade_90_effectsize <- effsize::cohen.d(fia_species_90$cade, vtm_species_90$cade)
+
+species_cade_10_30_effectsize_df <- as.data.frame(species_cade_10_30_effectsize$estimate) 
+species_cade_30_60_effectsize_df <- as.data.frame(species_cade_30_60_effectsize$estimate) 
+species_cade_60_90_effectsize_df <- as.data.frame(species_cade_60_90_effectsize$estimate) 
+species_cade_90_effectsize_df <- as.data.frame(species_cade_90_effectsize$estimate) 
+
+
+########### PICO ##############
+pico_test_10_30 <- boot.t.test(fia_species_10_30$pico, vtm_species_10_30$pico, paired = F )
+pico_test_30_60 <- boot.t.test(fia_species_30_60$pico, vtm_species_30_60$pico, paired = F )
+pico_test_60_90 <- boot.t.test(fia_species_60_90$pico, vtm_species_60_90$pico, paired = F )
+
+
+# test summary
+species_pico_10_30_test_summary <- broom::tidy(pico_test_10_30)
+species_pico_30_60_test_summary <- broom::tidy(pico_test_30_60)
+species_pico_60_90_test_summary <- broom::tidy(pico_test_60_90)
+
+#cohen's d
+species_pico_10_30_effectsize <- effsize::cohen.d(fia_species_10_30$pico, vtm_species_10_30$pico)
+species_pico_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$pico, vtm_species_30_60$pico)
+species_pico_60_90_effectsize <- effsize::cohen.d(fia_species_60_90$pico, vtm_species_60_90$pico)
+
+species_pico_10_30_effectsize_df <- as.data.frame(species_pico_10_30_effectsize$estimate) 
+species_pico_30_60_effectsize_df <- as.data.frame(species_pico_30_60_effectsize$estimate) 
+species_pico_60_90_effectsize_df <- as.data.frame(species_pico_60_90_effectsize$estimate) 
+
+
+########### PILA ##############
+pila_test_10_30 <- boot.t.test(fia_species_10_30$pila, vtm_species_10_30$pila, paired = F )
+pila_test_30_60 <- boot.t.test(fia_species_30_60$pila, vtm_species_30_60$pila, paired = F )
+pila_test_60_90 <- boot.t.test(fia_species_60_90$pila, vtm_species_60_90$pila, paired = F )
+pila_test_90 <- boot.t.test(fia_species_90$pila, vtm_species_90$pila, paired = F )
+
+# test summary
+species_pila_10_30_test_summary <- broom::tidy(pila_test_10_30)
+species_pila_30_60_test_summary <- broom::tidy(pila_test_30_60)
+species_pila_60_90_test_summary <- broom::tidy(pila_test_60_90)
+species_pila_90_test_summary <- broom::tidy(pila_test_90)
+
+#cohen's d
+species_pila_10_30_effectsize <- effsize::cohen.d(fia_species_10_30$pila, vtm_species_10_30$pila)
+species_pila_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$pila, vtm_species_30_60$pila)
+species_pila_60_90_effectsize <- effsize::cohen.d(fia_species_60_90$pila, vtm_species_60_90$pila)
+species_pila_90_effectsize <- effsize::cohen.d(fia_species_90$pila, vtm_species_90$pila)
+
+species_pila_10_30_effectsize_df <- as.data.frame(species_pila_10_30_effectsize$estimate) 
+species_pila_30_60_effectsize_df <- as.data.frame(species_pila_30_60_effectsize$estimate) 
+species_pila_60_90_effectsize_df <- as.data.frame(species_pila_60_90_effectsize$estimate) 
+species_pila_90_effectsize_df <- as.data.frame(species_pila_90_effectsize$estimate) 
+
+########### PSMA ##############
+psma_test_30_60 <- boot.t.test(fia_species_30_60$psma, vtm_species_30_60$psma, paired = F )
+psma_test_60_90 <- boot.t.test(fia_species_60_90$psma, vtm_species_60_90$psma, paired = F )
+
+# test summary
+species_psma_30_60_test_summary <- broom::tidy(psma_test_30_60)
+species_psma_60_90_test_summary <- broom::tidy(psma_test_60_90)
+
+
+#cohen's d
+species_psma_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$psma, vtm_species_30_60$psma)
+species_psma_60_90_effectsize <- effsize::cohen.d(fia_species_60_90$psma, vtm_species_60_90$psma)
+
+species_psma_30_60_effectsize_df <- as.data.frame(species_psma_30_60_effectsize$estimate) 
+species_psma_60_90_effectsize_df <- as.data.frame(species_psma_60_90_effectsize$estimate)
+
+########### Yellow Pine ##########
+yellow_pine_test_10_30 <- boot.t.test(fia_species_10_30$yellow_pine, vtm_species_10_30$yellow_pine, paired = F )
+yellow_pine_test_30_60 <- boot.t.test(fia_species_30_60$yellow_pine, vtm_species_30_60$yellow_pine, paired = F )
+yellow_pine_test_60_90 <- boot.t.test(fia_species_60_90$yellow_pine, vtm_species_60_90$yellow_pine, paired = F )
+yellow_pine_test_90 <- boot.t.test(fia_species_90$yellow_pine, vtm_species_90$yellow_pine, paired = F )
+
+# test summary
+species_yellow_pine_10_30_test_summary <- broom::tidy(yellow_pine_test_10_30)
+species_yellow_pine_30_60_test_summary <- broom::tidy(yellow_pine_test_30_60)
+species_yellow_pine_60_90_test_summary <- broom::tidy(yellow_pine_test_60_90)
+species_yellow_pine_90_test_summary <- broom::tidy(yellow_pine_test_90)
+
+#cohen's d
+species_yellow_pine_10_30_effectsize <- effsize::cohen.d(fia_species_10_30$yellow_pine, vtm_species_10_30$yellow_pine)
+species_yellow_pine_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$yellow_pine, vtm_species_30_60$yellow_pine)
+species_yellow_pine_60_90_effectsize <- effsize::cohen.d(fia_species_60_90$yellow_pine, vtm_species_60_90$yellow_pine)
+species_yellow_pine_90_effectsize <- effsize::cohen.d(fia_species_90$yellow_pine, vtm_species_90$yellow_pine)
+
+species_yellow_pine_10_30_effectsize_df <- as.data.frame(species_yellow_pine_10_30_effectsize$estimate) 
+species_yellow_pine_30_60_effectsize_df <- as.data.frame(species_yellow_pine_30_60_effectsize$estimate) 
+species_yellow_pine_60_90_effectsize_df <- as.data.frame(species_yellow_pine_60_90_effectsize$estimate) 
+species_yellow_pine_90_effectsize_df <- as.data.frame(species_yellow_pine_90_effectsize$estimate) 
+
+
+########### QUCH ##############
+quch_test_10_30 <- boot.t.test(fia_species_10_30$quch, vtm_species_10_30$quch, paired = F )
+quch_test_30_60 <- boot.t.test(fia_species_30_60$quch, vtm_species_30_60$quch, paired = F )
+
+
+# test summary
+species_quch_10_30_test_summary <- broom::tidy(quch_test_10_30)
+species_quch_30_60_test_summary <- broom::tidy(quch_test_30_60)
+
+
+#cohen's d
+species_quch_10_30_effectsize <- effsize::cohen.d(fia_species_10_30$quch, vtm_species_10_30$quch)
+species_quch_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$quch, vtm_species_30_60$quch)
+
+species_quch_10_30_effectsize_df <- as.data.frame(species_quch_10_30_effectsize$estimate) 
+species_quch_30_60_effectsize_df <- as.data.frame(species_quch_30_60_effectsize$estimate) 
+
+
+########### QUKE ##############
+quke_test_10_30 <- boot.t.test(fia_species_10_30$quke, vtm_species_10_30$quke, paired = F )
+quke_test_30_60 <- boot.t.test(fia_species_30_60$quke, vtm_species_30_60$quke, paired = F )
+quke_test_60_90 <- boot.t.test(fia_species_60_90$quke, vtm_species_60_90$quke, paired = F )
+
+
+# test summary
+species_quke_10_30_test_summary <- broom::tidy(quke_test_10_30)
+species_quke_30_60_test_summary <- broom::tidy(quke_test_30_60)
+species_quke_60_90_test_summary <- broom::tidy(quke_test_60_90)
+
+#cohen's d
+species_quke_10_30_effectsize <- effsize::cohen.d(fia_species_10_30$quke, vtm_species_10_30$quke)
+species_quke_30_60_effectsize <- effsize::cohen.d(fia_species_30_60$quke, vtm_species_30_60$quke)
+species_quke_60_90_effectsize <- effsize::cohen.d(fia_species_60_90$quke, vtm_species_60_90$quke)
+
+species_quke_10_30_effectsize_df <- as.data.frame(species_quke_10_30_effectsize$estimate) 
+species_quke_30_60_effectsize_df <- as.data.frame(species_quke_30_60_effectsize$estimate) 
+species_quke_60_90_effectsize_df <- as.data.frame(species_quke_60_90_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+########### sub data
+# vtm_species2 <- vtm_tidy %>% 
+#   group_by(plotkey, species, dbh_class) %>% 
+#   tally() %>% 
+#   pivot_wider(names_from = dbh_class,
+#               values_from = n) %>% 
+#   clean_names() %>% 
+#   mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+#          x30_5_60_9 = replace_na(x30_5_60_9, 0),
+#          x61_0_91_3 = replace_na(x61_0_91_3, 0),
+#          x91_4 = replace_na(x91_4, 0)) %>% 
+#   pivot_longer(x10_2_30_4:x91_4,
+#                names_to = 'dbh_class', 
+#                values_to = 'n') %>% 
+#   pivot_wider(names_from = species,
+#               values_from = n) %>% 
+#   clean_names() %>% 
+#   mutate(abco = replace_na(abco, 0),
+#          cade = replace_na(cade, 0),
+#          pico = replace_na(pico, 0),
+#          pila = replace_na(pila, 0),
+#          psma = replace_na(psma, 0),
+#          yellow_pine = replace_na(yellow_pine, 0),
+#          quch = replace_na(quch, 0),
+#          quke = replace_na(quke, 0)) %>% 
+#   mutate(time_frame = "VTM") %>% 
+#   mutate(area = 809)
+# 
+# fia_species2 <- fia_tidy %>% 
+#   group_by(join_plot, species, dbh_class) %>% 
+#   tally() %>% 
+#   pivot_wider(names_from = dbh_class,
+#               values_from = n) %>% 
+#   clean_names() %>% 
+#   mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+#          x30_5_60_9 = replace_na(x30_5_60_9, 0),
+#          x61_0_91_3 = replace_na(x61_0_91_3, 0),
+#          x91_4 = replace_na(x91_4, 0)) %>% 
+#   pivot_longer(x10_2_30_4:x91_4,
+#                names_to = 'dbh_class', 
+#                values_to = 'n') %>% 
+#   pivot_wider(names_from = species,
+#               values_from = n) %>% 
+#   clean_names() %>% 
+#   mutate(abco = replace_na(abco, 0),
+#          cade = replace_na(cade, 0),
+#          pico = replace_na(pico, 0),
+#          pila = replace_na(pila, 0),
+#          psma = replace_na(psma, 0),
+#          yellow_pine = replace_na(yellow_pine, 0),
+#          quch = replace_na(quch, 0),
+#          quke = replace_na(quke, 0)) %>% 
+#   dplyr::select(-join_plot) %>% 
+#   mutate(time_frame = "FIA") %>% 
+#   mutate(area = 672.45)
+#  
+# species2 <- rbind(vtm_species2, fia_species2) 
+# 
+# abco_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(abco, time_frame, area)
+# abco_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(abco, time_frame, area)
+# abco_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(abco, time_frame, area)
+# abco_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(abco, time_frame, area)
+#  
+# cade_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(cade, time_frame, area)
+# cade_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(cade, time_frame, area)
+# cade_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(cade, time_frame, area)
+# cade_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(cade, time_frame, area)
+# 
+# pico_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(pico, time_frame, area)
+# pico_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(pico, time_frame, area)
+# pico_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(pico, time_frame, area)
+# pico_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(pico, time_frame, area)
+# 
+# pila_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(pila, time_frame, area)
+# pila_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(pila, time_frame, area)
+# pila_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(pila, time_frame, area)
+# pila_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(pila, time_frame, area)
+# 
+# psma_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(psma, time_frame, area)
+# psma_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(psma, time_frame, area)
+# psma_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(psma, time_frame, area)
+# psma_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(psma, time_frame, area)
+# 
+# yp_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(yellow_pine, time_frame, area)
+# yp_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(yellow_pine, time_frame, area)
+# yp_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(yellow_pine, time_frame, area)
+# yp_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(yellow_pine, time_frame, area)
+# 
+# quch_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(quch, time_frame, area)
+# quch_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(quch, time_frame, area)
+# quch_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(quch, time_frame, area)
+# quch_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(quch, time_frame, area)
+# 
+# quke_10_30 <- species2 %>% filter(dbh_class == "x10_2_30_4") %>% dplyr::select(quke, time_frame, area)
+# quke_30_60 <- species2 %>% filter(dbh_class == "x30_5_60_9") %>% dplyr::select(quke, time_frame, area)
+# quke_60_90 <- species2 %>% filter(dbh_class == "x61_0_91_3") %>% dplyr::select(quke, time_frame, area)
+# quke_90 <- species2 %>% filter(dbh_class == "x91_4") %>% dplyr::select(quke, time_frame, area)
+# 
+# ############ ABCO
+# abco_nb_10_30 <- glm.nb(abco ~ time_frame + offset(log(area)), data = abco_10_30)
+# summary(abco_nb_10_30)
+# 
+# abco_nb_summary <- broom::tidy(abco_nb_10_30)
+# 
+# ggplot(abco_10_30, aes(sample=abco))+ geom_qq()
+# 
+# ############ CADE
+# species2_cade <- species2 %>% filter(species == "CADE")
+# 
+# # compare mean adn variance
+# mean(species2_cade$n) # 8
+# var(species2_cade$n) # 451 data IS overdispersed
+# 
+# # model
+# cade_nb <- glm.nb(n ~ time_frame + offset(log(area)), data = species2_cade)
+# summary(cade_nb)
+# 
+# cade_nb_summary <- broom::tidy(cade_nb)
+# 
+# ############ PICO
+# species2_pico <- species2 %>% filter(species == "PICO")
+# 
+# # compare mean adn variance
+# mean(species2_pico$n) # 8
+# var(species2_pico$n) # 451 data IS overdispersed
+# 
+# # model
+# pico_nb <- glm.nb(n ~ time_frame + offset(log(area)), data = species2_pico)
+# summary(pico_nb)
+# 
+# pico_nb_summary <- broom::tidy(pico_nb)
+# 
+# ############ PILA
+# species2_pila <- species2 %>% filter(species == "PILA")
+# 
+# # compare mean adn variance
+# mean(species2_pila$n) # 4
+# var(species2_pila$n) # 17...idk if the data is overdispersed
+# 
+# # model
+# pila_nb <- glm.nb(n ~ time_frame + offset(log(area)), data = species2_pila)
+# summary(pila_nb)
+# 
+# pila_nb_summary <- broom::tidy(pila_nb)
+# 
+# ############ Yellow Pine
+# species2_yp <- species2 %>% filter(species == "Yellow Pine")
+# 
+# # compare mean adn variance
+# mean(species2_yp$n) # 9
+# var(species2_yp$n) # 83  data is overdispersed?
+# 
+# # model
+# yp_nb <- glm.nb(n ~ time_frame + offset(log(area)), data = species2_yp)
+# summary(yp_nb)
+# 
+# yp_nb_summary <- broom::tidy(yp_nb)
+# 
+# ############ QUCH
+# species2_quch <- species2 %>% filter(species == "QUCH")
+# 
+# # compare mean adn variance
+# mean(species2_quch$n) # 15
+# var(species2_quch$n) # 300  data is overdispersed
+# 
+# # model
+# quch_nb <- glm.nb(n ~ time_frame + offset(log(area)), data = species2_quch)
+# summary(quch_nb)
+# 
+# quch_nb_summary <- broom::tidy(quch_nb)
+# 
+# ############ QUKE
+# species2_quke <- species2 %>% filter(species == "QUKE")
+# 
+# # compare mean adn variance
+# mean(species2_quke$n) # 8
+# var(species2_quke$n) # 62  data is overdispersed?
+# 
+# # model
+# quke_nb <- glm.nb(n ~ time_frame + offset(log(area)), data = species2_quke)
+# summary(quke_nb)
+# 
+# quke_nb_summary <- broom::tidy(quke_nb)
+
+ggplot(vtm_species_30_60, aes(sample=abco)) +geom_qq()  
+ggplot(fia_species_90, aes(sample=pila)) +geom_qq() 
+
+```
+
+
+
+
+## Shade/Fire Tolerance2
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_shade2 <- vtm_tidy %>% 
+group_by(plotkey, dbh_class, shade_tolerance2) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class', 
+               values_to = 'stem_density') %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+
+fia_shade2 <- fia_tidy %>% 
+  group_by(join_plot, dbh_class, shade_tolerance2) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class', 
+               values_to = 'stem_density') %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(area = 672.45)
+
+shade2 <- dplyr::bind_rows(vtm_shade2, fia_shade2) 
+
+# sub data for running stats tests
+vtm_shade2_10_30 <- vtm_shade2 %>%  filter(dbh_class == "x10_2_30_4")
+vtm_shade2_30_60 <- vtm_shade2 %>%  filter(dbh_class == "x30_5_60_9")
+vtm_shade2_60_90 <- vtm_shade2 %>%  filter(dbh_class == "x61_0_91_3")
+vtm_shade2_90 <- vtm_shade2 %>%  filter(dbh_class == "x91_4")
+
+fia_shade2_10_30 <- fia_shade2 %>%  filter(dbh_class == "x10_2_30_4")
+fia_shade2_30_60 <- fia_shade2 %>%  filter(dbh_class == "x30_5_60_9")
+fia_shade2_60_90 <- fia_shade2 %>%  filter(dbh_class == "x61_0_91_3")
+fia_shade2_90 <- fia_shade2 %>%  filter(dbh_class == "x91_4")
+
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+
+########## STFI ########
+stfi_test_10_30 <- t.test(fia_shade2_10_30$shade_tolerant_fire_intolerant, vtm_shade2_10_30$shade_tolerant_fire_intolerant, paired = F )
+stfi_test_30_60 <- t.test(fia_shade2_30_60$shade_tolerant_fire_intolerant, vtm_shade2_30_60$shade_tolerant_fire_intolerant, paired = F )
+stfi_test_60_90 <- t.test(fia_shade2_60_90$shade_tolerant_fire_intolerant, vtm_shade2_60_90$shade_tolerant_fire_intolerant, paired = F )
+stfi_test_90 <- t.test(fia_shade2_90$shade_tolerant_fire_intolerant, vtm_shade2_90$shade_tolerant_fire_intolerant, paired = F )
+
+# test summary
+shade2_stfi_10_30_test_summary <- broom::tidy(stfi_test_10_30)
+shade2_stfi_30_60_test_summary <- broom::tidy(stfi_test_30_60)
+shade2_stfi_60_90_test_summary <- broom::tidy(stfi_test_60_90)
+shade2_stfi_90_test_summary <- broom::tidy(stfi_test_90)
+
+#cohen's d
+shade2_stfi_10_30_effectsize <- effsize::cohen.d(fia_shade2_10_30$shade_tolerant_fire_intolerant, vtm_shade2_10_30$shade_tolerant_fire_intolerant)
+shade2_stfi_30_60_effectsize <- effsize::cohen.d(fia_shade2_30_60$shade_tolerant_fire_intolerant, vtm_shade2_30_60$shade_tolerant_fire_intolerant)
+shade2_stfi_60_90_effectsize <- effsize::cohen.d(fia_shade2_60_90$shade_tolerant_fire_intolerant, vtm_shade2_60_90$shade_tolerant_fire_intolerant)
+shade2_stfi_90_effectsize <- effsize::cohen.d(fia_shade2_90$shade_tolerant_fire_intolerant, vtm_shade2_90$shade_tolerant_fire_intolerant)
+
+shade2_stfi_10_30_effectsize_df <- as.data.frame(shade2_stfi_10_30_effectsize$estimate) 
+shade2_stfi_30_60_effectsize_df <- as.data.frame(shade2_stfi_30_60_effectsize$estimate) 
+shade2_stfi_60_90_effectsize_df <- as.data.frame(shade2_stfi_60_90_effectsize$estimate) 
+shade2_stfi_90_effectsize_df <- as.data.frame(shade2_stfi_90_effectsize$estimate) 
+
+###### SIFT ######
+sift_test_10_30 <- t.test(fia_shade2_10_30$shade_intolerant_fire_tolerant, vtm_shade2_10_30$shade_intolerant_fire_tolerant, paired = F )
+sift_test_30_60 <- t.test(fia_shade2_30_60$shade_intolerant_fire_tolerant, vtm_shade2_30_60$shade_intolerant_fire_tolerant, paired = F )
+sift_test_60_90 <- t.test(fia_shade2_60_90$shade_intolerant_fire_tolerant, vtm_shade2_60_90$shade_intolerant_fire_tolerant, paired = F )
+sift_test_90 <- t.test(fia_shade2_90$shade_intolerant_fire_tolerant, vtm_shade2_90$shade_intolerant_fire_tolerant, paired = F )
+
+# test summary
+shade2_sift_10_30_test_summary <- broom::tidy(sift_test_10_30)
+shade2_sift_30_60_test_summary <- broom::tidy(sift_test_30_60)
+shade2_sift_60_90_test_summary <- broom::tidy(sift_test_60_90)
+shade2_sift_90_test_summary <- broom::tidy(sift_test_90)
+
+#cohen's d
+shade2_sift_10_30_effectsize <- effsize::cohen.d(fia_shade2_10_30$shade_intolerant_fire_tolerant, vtm_shade2_10_30$shade_intolerant_fire_tolerant)
+shade2_sift_30_60_effectsize <- effsize::cohen.d(fia_shade2_30_60$shade_intolerant_fire_tolerant, vtm_shade2_30_60$shade_intolerant_fire_tolerant)
+shade2_sift_60_90_effectsize <- effsize::cohen.d(fia_shade2_60_90$shade_intolerant_fire_tolerant, vtm_shade2_60_90$shade_intolerant_fire_tolerant)
+shade2_sift_90_effectsize <- effsize::cohen.d(fia_shade2_90$shade_intolerant_fire_tolerant, vtm_shade2_90$shade_intolerant_fire_tolerant)
+
+shade2_sift_10_30_effectsize_df <- as.data.frame(shade2_sift_10_30_effectsize$estimate) 
+shade2_sift_30_60_effectsize_df <- as.data.frame(shade2_sift_30_60_effectsize$estimate) 
+shade2_sift_60_90_effectsize_df <- as.data.frame(shade2_sift_60_90_effectsize$estimate) 
+shade2_sift_90_effectsize_df <- as.data.frame(shade2_sift_90_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+########### sub data
+vtm_shade2.o <- vtm_tidy %>%
+group_by(plotkey, dbh_class, shade_tolerance2) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = 'n') %>%
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_shade2.o <- fia_tidy %>%
+  group_by(join_plot, dbh_class, shade_tolerance2) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = 'n') %>%
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>%
+  dplyr::select(-join_plot) %>%
+  mutate(time_frame = "FIA") 
+
+vtm_shade2.o <- inner_join(vtm_shade2.o, vtm_slope, by = "plotkey")
+fia_shade2.o <- inner_join(fia_shade2.o, fia_slope, by = "join_plot")
+
+shade2.o <- dplyr::bind_rows(vtm_shade2.o, fia_shade2.o)
+
+# data for regression
+stfi_10_30 <- shade2.o %>% filter(dbh_class == 'x10_2_30_4') %>%
+  dplyr::select(shade_tolerant_fire_intolerant, time_frame, slope_corrected_area)
+stfi_30_60 <- shade2.o %>% filter(dbh_class == 'x30_5_60_9')%>%
+  dplyr::select(shade_tolerant_fire_intolerant, time_frame, slope_corrected_area)
+stfi_60_90 <- shade2.o %>% filter(dbh_class == 'x61_0_91_3')%>%
+  dplyr::select(shade_tolerant_fire_intolerant, time_frame, slope_corrected_area)
+stfi_90 <- shade2.o %>% filter(dbh_class == 'x91_4')%>%
+  dplyr::select(shade_tolerant_fire_intolerant, time_frame, slope_corrected_area)
+
+sift_10_30 <- shade2.o %>% filter(dbh_class == 'x10_2_30_4')%>%
+  dplyr::select(shade_intolerant_fire_tolerant, time_frame, slope_corrected_area)
+sift_30_60 <- shade2.o %>% filter(dbh_class == 'x30_5_60_9')%>%
+  dplyr::select(shade_intolerant_fire_tolerant, time_frame, slope_corrected_area)
+sift_60_90 <- shade2.o %>% filter(dbh_class == 'x61_0_91_3')%>%
+  dplyr::select(shade_intolerant_fire_tolerant, time_frame, slope_corrected_area)
+sift_90 <- shade2.o %>% filter(dbh_class == 'x91_4')%>%
+  dplyr::select(shade_intolerant_fire_tolerant, time_frame, slope_corrected_area)
+
+
+
+######### STFI ######
+stfi_nb_10_30 <- glm.nb(shade_tolerant_fire_intolerant ~ time_frame + offset(log(slope_corrected_area)), data = stfi_10_30)
+summary(stfi_nb_10_30)
+stfi_nb_10_30_summary <- broom::tidy(stfi_nb_10_30)
+
+stfi_nb_30_60 <- glm.nb(shade_tolerant_fire_intolerant ~ time_frame + offset(log(slope_corrected_area)), data = stfi_30_60)
+summary(stfi_nb_30_60)
+stfi_nb_30_60_summary <- broom::tidy(stfi_nb_30_60)
+
+stfi_nb_60_90 <- glm.nb(shade_tolerant_fire_intolerant ~ time_frame + offset(log(slope_corrected_area)), data = stfi_60_90)
+summary(stfi_nb_60_90)
+stfi_nb_60_90_summary <- broom::tidy(stfi_nb_60_90)
+
+stfi_nb_90 <- glm.nb(shade_tolerant_fire_intolerant ~ time_frame + offset(log(slope_corrected_area)), data = stfi_90)
+summary(stfi_nb_90)
+stfi_nb_90_summary <- broom::tidy(stfi_nb_90)
+
+##### SIFT #####
+sift_nb_10_30 <- glm.nb(shade_intolerant_fire_tolerant ~ time_frame + offset(log(slope_corrected_area)), data = sift_10_30)
+summary(sift_nb_10_30)
+sift_nb_10_30_summary <- broom::tidy(sift_nb_10_30)
+
+sift_nb_30_60 <- glm.nb(shade_intolerant_fire_tolerant ~ time_frame + offset(log(slope_corrected_area)), data = sift_30_60)
+summary(sift_nb_30_60)
+sift_nb_30_60_summary <- broom::tidy(sift_nb_30_60)
+
+sift_nb_60_90 <- glm.nb(shade_intolerant_fire_tolerant ~ time_frame + offset(log(slope_corrected_area)), data = sift_60_90)
+summary(sift_nb_60_90)
+sift_nb_60_90_summary <- broom::tidy(sift_nb_60_90)
+
+sift_nb_90 <- glm.nb(shade_intolerant_fire_tolerant ~ time_frame + offset(log(slope_corrected_area)), data = sift_90)
+summary(sift_nb_90)
+sift_nb_90_summary <- broom::tidy(sift_nb_90)
+
+
+##################################### Check assumptions ############################################
+
+ggplot(stfi_10_30, aes(sample=shade_tolerant_fire_intolerant)) + geom_qq() #
+ggplot(stfi_30_60, aes(sample=shade_tolerant_fire_intolerant)) + geom_qq() #
+ggplot(stfi_60_90, aes(sample=shade_tolerant_fire_intolerant)) + geom_qq() #
+ggplot(stfi_90, aes(sample=shade_tolerant_fire_intolerant)) + geom_qq() #
+
+ggplot(sift_10_30, aes(sample=shade_intolerant_fire_tolerant)) + geom_qq() #
+ggplot(sift_30_60, aes(sample=shade_intolerant_fire_tolerant)) + geom_qq() #
+ggplot(sift_60_90, aes(sample=shade_intolerant_fire_tolerant)) + geom_qq() #
+ggplot(sift_90, aes(sample=shade_intolerant_fire_tolerant)) + geom_qq() #
+
+```
+
+
+## National Forest
+
+### ANF
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_anf <- vtm_tidy %>% 
+  filter(national_forest_name == "anf") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  dplyr::select(-plotkey) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(area = 809)
+
+fia_anf <- fia_tidy %>% 
+  filter(admin_forest == "ANF") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(x30_5_60_9:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(area = 672.45)
+
+anf <- dplyr::bind_rows(vtm_anf, fia_anf) 
+
+# sub data for running stats tests
+vtm_anf_10_30 <- vtm_anf %>%  filter(dbh_class == "x10_2_30_4")
+vtm_anf_30_60 <- vtm_anf %>%  filter(dbh_class == "x30_5_60_9")
+vtm_anf_60_90 <- vtm_anf %>%  filter(dbh_class == "x61_0_91_3")
+vtm_anf_90 <- vtm_anf %>%  filter(dbh_class == "x91_4")
+
+fia_anf_10_30 <- fia_anf %>%  filter(dbh_class == "x10_2_30_4")
+fia_anf_30_60 <- fia_anf %>%  filter(dbh_class == "x30_5_60_9")
+fia_anf_60_90 <- fia_anf %>%  filter(dbh_class == "x61_0_91_3")
+fia_anf_90 <- fia_anf %>%  filter(dbh_class == "x91_4")
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+#ggplot(anf, aes(x=stem_density)) +geom_histogram() # skewed
+
+#ggplot(vtm_anf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+#ggplot(fia_anf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+anf_test_10_30 <- t.test(fia_anf_10_30$stem_density, vtm_anf_10_30$stem_density, paired = F )
+anf_test_30_60 <- t.test(fia_anf_30_60$stem_density, vtm_anf_30_60$stem_density, paired = F )
+anf_test_60_90 <- t.test(fia_anf_60_90$stem_density, vtm_anf_60_90$stem_density, paired = F )
+anf_test_90 <- t.test(fia_anf_90$stem_density, vtm_anf_90$stem_density, paired = F )
+
+# test summary
+anf_10_30_test_summary <- broom::tidy(anf_test_10_30)
+anf_30_60_test_summary <- broom::tidy(anf_test_30_60)
+anf_60_90_test_summary <- broom::tidy(anf_test_60_90)
+anf_90_test_summary <- broom::tidy(anf_test_90)
+
+#cohen's d
+anf_10_30_effectsize <- effsize::cohen.d(fia_anf_10_30$stem_density, vtm_anf_10_30$stem_density)
+anf_30_60_effectsize <- effsize::cohen.d(fia_anf_30_60$stem_density, vtm_anf_30_60$stem_density)
+anf_60_90_effectsize <- effsize::cohen.d(fia_anf_60_90$stem_density, vtm_anf_60_90$stem_density)
+anf_90_effectsize <- effsize::cohen.d(fia_anf_90$stem_density, vtm_anf_90$stem_density)
+
+anf_10_30_effectsize_df <- as.data.frame(anf_10_30_effectsize$estimate) 
+anf_30_60_effectsize_df <- as.data.frame(anf_30_60_effectsize$estimate) 
+anf_60_90_effectsize_df <- as.data.frame(anf_60_90_effectsize$estimate) 
+anf_90_effectsize_df <- as.data.frame(anf_90_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+####### sub data
+vtm_anf <- vtm_tidy %>%
+  filter(national_forest_name == "anf") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  #dplyr::select(-plotkey) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n= as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_anf <- fia_tidy %>%
+  filter(admin_forest == "ANF") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(x30_5_60_9:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  dplyr::rename(plotkey=join_plot) %>%
+  mutate(plotkey = as.character(plotkey)) %>%
+  mutate(time_frame = "FIA") %>%
+  mutate(n= as.numeric(n)) 
+
+vtm_anf <- inner_join(vtm_anf, vtm_slope, by = "plotkey")
+fia_anf <- inner_join(fia_anf, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+anf <- rbind(vtm_anf, fia_anf)
+
+anf_10_30 <- anf %>% filter (dbh_class == "x10_2_30_4")
+anf_30_60 <- anf %>% filter (dbh_class == "x30_5_60_9")
+anf_60_90 <- anf %>% filter (dbh_class == "x61_0_91_3")
+anf_90 <- anf %>% filter (dbh_class == "x91_4")
+
+
+# ##### model
+anf_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = anf_10_30)
+summary(anf_nb_10_30)
+anf_nb_10_30_summary <- broom::tidy(anf_nb_10_30)
+
+anf_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = anf_30_60)
+summary(anf_nb_30_60)
+anf_nb_30_60_summary <- broom::tidy(anf_nb_30_60)
+
+anf_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = anf_60_90)
+summary(anf_nb_60_90)
+anf_nb_60_90_summary <- broom::tidy(anf_nb_60_90)
+
+anf_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = anf_90)
+summary(anf_nb_90)
+anf_nb_90_summary <- broom::tidy(anf_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(anf_10_30, aes(sample=n)) + geom_qq() #
+ggplot(anf_30_60, aes(sample=n)) + geom_qq() #
+ggplot(anf_60_90, aes(sample=n)) + geom_qq() #
+ggplot(anf_90, aes(sample=n)) + geom_qq() #
+
+```
+
+### LPNF
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_lpnf <- vtm_tidy %>% 
+  filter(national_forest_name == "lpnf") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_lpnf <- fia_tidy %>% 
+  filter(admin_forest %in% c("LPNF", "LPF")) %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(4:7,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+lpnf <- rbind(vtm_lpnf, fia_lpnf) 
+
+# sub data for running stats tests
+vtm_lpnf_10_30 <- vtm_lpnf %>%  filter(dbh_class == "x10_2_30_4")
+vtm_lpnf_30_60 <- vtm_lpnf %>%  filter(dbh_class == "x30_5_60_9")
+vtm_lpnf_60_90 <- vtm_lpnf %>%  filter(dbh_class == "x61_0_91_3")
+vtm_lpnf_90 <- vtm_lpnf %>%  filter(dbh_class == "x91_4")
+
+fia_lpnf_10_30 <- fia_lpnf %>%  filter(dbh_class == "x10_2_30_4")
+fia_lpnf_30_60 <- fia_lpnf %>%  filter(dbh_class == "x30_5_60_9")
+fia_lpnf_60_90 <- fia_lpnf %>%  filter(dbh_class == "x61_0_91_3")
+fia_lpnf_90 <- fia_lpnf %>%  filter(dbh_class == "x91_4")
+
+######################################### sample size ##########################################
+
+vtm_lpnf_n <- nrow(vtm_lpnf)
+fia_lpnf_n <- nrow(fia_lpnf)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+# ggplot(lpnf, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+# 
+# ggplot(vtm_lpnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+# ggplot(fia_lpnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+lpnf_test_10_30 <- t.test(fia_lpnf_10_30$stem_density, vtm_lpnf_10_30$stem_density, paired = F )
+lpnf_test_30_60 <- t.test(fia_lpnf_30_60$stem_density, vtm_lpnf_30_60$stem_density, paired = F )
+lpnf_test_60_90 <- t.test(fia_lpnf_60_90$stem_density, vtm_lpnf_60_90$stem_density, paired = F )
+lpnf_test_90 <- t.test(fia_lpnf_90$stem_density, vtm_lpnf_90$stem_density, paired = F )
+
+# test summary
+lpnf_10_30_test_summary <- broom::tidy(lpnf_test_10_30)
+lpnf_30_60_test_summary <- broom::tidy(lpnf_test_30_60)
+lpnf_60_90_test_summary <- broom::tidy(lpnf_test_60_90)
+lpnf_90_test_summary <- broom::tidy(lpnf_test_90)
+
+#cohen's d
+lpnf_10_30_effectsize <- effsize::cohen.d(fia_lpnf_10_30$stem_density, vtm_lpnf_10_30$stem_density)
+lpnf_30_60_effectsize <- effsize::cohen.d(fia_lpnf_30_60$stem_density, vtm_lpnf_30_60$stem_density)
+lpnf_60_90_effectsize <- effsize::cohen.d(fia_lpnf_60_90$stem_density, vtm_lpnf_60_90$stem_density)
+lpnf_90_effectsize <- effsize::cohen.d(fia_lpnf_90$stem_density, vtm_lpnf_90$stem_density)
+
+lpnf_10_30_effectsize_df <- as.data.frame(lpnf_10_30_effectsize$estimate) 
+lpnf_30_60_effectsize_df <- as.data.frame(lpnf_30_60_effectsize$estimate) 
+lpnf_60_90_effectsize_df <- as.data.frame(lpnf_60_90_effectsize$estimate) 
+lpnf_90_effectsize_df <- as.data.frame(lpnf_90_effectsize$estimate) 
+
+
+
+######################################## negative binomial #######################################
+
+####### sub data
+vtm_lpnf <- vtm_tidy %>%
+  filter(national_forest_name == "lpnf") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n= as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_lpnf <- fia_tidy %>%
+  filter(admin_forest %in% c("LPNF", "LPF")) %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) %>% 
+  mutate(time_frame = "FIA") %>%
+  mutate(n= as.numeric(n)) 
+
+vtm_lpnf <- inner_join(vtm_lpnf, vtm_slope, by = "plotkey")
+fia_lpnf <- inner_join(fia_lpnf, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+
+lpnf <- rbind(vtm_lpnf, fia_lpnf)
+
+lpnf_10_30 <- lpnf %>% filter (dbh_class == "x10_2_30_4")
+lpnf_30_60 <- lpnf %>% filter (dbh_class == "x30_5_60_9")
+lpnf_60_90 <- lpnf %>% filter (dbh_class == "x61_0_91_3")
+lpnf_90 <- lpnf %>% filter (dbh_class == "x91_4")
+
+
+##### model
+lpnf_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = lpnf_10_30)
+summary(lpnf_nb_10_30)
+lpnf_nb_10_30_summary <- broom::tidy(lpnf_nb_10_30)
+
+lpnf_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = lpnf_30_60)
+summary(lpnf_nb_30_60)
+lpnf_nb_30_60_summary <- broom::tidy(lpnf_nb_30_60)
+
+lpnf_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = lpnf_60_90)
+summary(lpnf_nb_60_90)
+lpnf_nb_60_90_summary <- broom::tidy(lpnf_nb_60_90)
+
+lpnf_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = lpnf_90)
+summary(lpnf_nb_90)
+lpnf_nb_90_summary <- broom::tidy(lpnf_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(lpnf_10_30, aes(sample=n)) + geom_qq() #
+ggplot(lpnf_30_60, aes(sample=n)) + geom_qq() #
+ggplot(lpnf_60_90, aes(sample=n)) + geom_qq() #
+ggplot(lpnf_90, aes(sample=n)) + geom_qq() #
+```
+
+### SBNF
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_sbnf <- vtm_tidy %>% 
+  filter(national_forest_name == "sbnf") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  dplyr::select(-plotkey) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+
+fia_sbnf <- fia_tidy %>% 
+  filter(admin_forest %in% c("BDF", "SBNF")) %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(4:7,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(area = 672.45)
+
+#sbnf <- rbind(vtm_sbnf, fia_sbnf) 
+
+vtm_sbnf_10_30 <- vtm_sbnf %>%  filter(dbh_class == "x10_2_30_4")
+vtm_sbnf_30_60 <- vtm_sbnf %>%  filter(dbh_class == "x30_5_60_9")
+vtm_sbnf_60_90 <- vtm_sbnf %>%  filter(dbh_class == "x61_0_91_3")
+vtm_sbnf_90 <- vtm_sbnf %>%  filter(dbh_class == "x91_4")
+
+fia_sbnf_10_30 <- fia_sbnf %>%  filter(dbh_class == "x10_2_30_4")
+fia_sbnf_30_60 <- fia_sbnf %>%  filter(dbh_class == "x30_5_60_9")
+fia_sbnf_60_90 <- fia_sbnf %>%  filter(dbh_class == "x61_0_91_3")
+fia_sbnf_90 <- fia_sbnf %>%  filter(dbh_class == "x91_4")
+
+######################################### sample size ##########################################
+
+vtm_sbnf_n <- nrow(vtm_sbnf)
+fia_sbnf_n <- nrow(fia_sbnf)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+# ggplot(sbnf, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+# 
+# ggplot(vtm_sbnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+# ggplot(fia_sbnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+sbnf_test_10_30 <- t.test(fia_sbnf_10_30$stem_density, vtm_sbnf_10_30$stem_density, paired = F )
+sbnf_test_30_60 <- t.test(fia_sbnf_30_60$stem_density, vtm_sbnf_30_60$stem_density, paired = F )
+sbnf_test_60_90 <- t.test(fia_sbnf_60_90$stem_density, vtm_sbnf_60_90$stem_density, paired = F )
+sbnf_test_90 <- t.test(fia_sbnf_90$stem_density, vtm_sbnf_90$stem_density, paired = F )
+
+# test summary
+sbnf_10_30_test_summary <- broom::tidy(sbnf_test_10_30)
+sbnf_30_60_test_summary <- broom::tidy(sbnf_test_30_60)
+sbnf_60_90_test_summary <- broom::tidy(sbnf_test_60_90)
+sbnf_90_test_summary <- broom::tidy(sbnf_test_90)
+
+#cohen's d
+sbnf_10_30_effectsize <- effsize::cohen.d(fia_sbnf_10_30$stem_density, vtm_sbnf_10_30$stem_density)
+sbnf_30_60_effectsize <- effsize::cohen.d(fia_sbnf_30_60$stem_density, vtm_sbnf_30_60$stem_density)
+sbnf_60_90_effectsize <- effsize::cohen.d(fia_sbnf_60_90$stem_density, vtm_sbnf_60_90$stem_density)
+sbnf_90_effectsize <- effsize::cohen.d(fia_sbnf_90$stem_density, vtm_sbnf_90$stem_density)
+
+sbnf_10_30_effectsize_df <- as.data.frame(sbnf_10_30_effectsize$estimate) 
+sbnf_30_60_effectsize_df <- as.data.frame(sbnf_30_60_effectsize$estimate) 
+sbnf_60_90_effectsize_df <- as.data.frame(sbnf_60_90_effectsize$estimate) 
+sbnf_90_effectsize_df <- as.data.frame(sbnf_90_effectsize$estimate) 
+
+ 
+
+######################################## negative binomial #######################################
+
+####### sub data
+vtm_sbnf <- vtm_tidy %>%
+  filter(national_forest_name == "sbnf") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n= as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_sbnf <- fia_tidy %>%
+  filter(admin_forest %in% c("BDF", "SBNF")) %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) %>% 
+  mutate(time_frame = "FIA") %>%
+  mutate(n= as.numeric(n))
+
+vtm_sbnf <- inner_join(vtm_sbnf, vtm_slope, by = "plotkey")
+fia_sbnf <- inner_join(fia_sbnf, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+sbnf <- rbind(vtm_sbnf, fia_sbnf)
+
+sbnf_10_30 <- sbnf %>% filter (dbh_class == "x10_2_30_4")
+sbnf_30_60 <- sbnf %>% filter (dbh_class == "x30_5_60_9")
+sbnf_60_90 <- sbnf %>% filter (dbh_class == "x61_0_91_3")
+sbnf_90 <- sbnf %>% filter (dbh_class == "x91_4")
+
+
+##### model
+sbnf_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = sbnf_10_30)
+summary(sbnf_nb_10_30)
+sbnf_nb_10_30_summary <- broom::tidy(sbnf_nb_10_30)
+
+sbnf_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = sbnf_30_60)
+summary(sbnf_nb_30_60)
+sbnf_nb_30_60_summary <- broom::tidy(sbnf_nb_30_60)
+
+sbnf_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = sbnf_60_90)
+summary(sbnf_nb_60_90)
+sbnf_nb_60_90_summary <- broom::tidy(sbnf_nb_60_90)
+
+sbnf_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = sbnf_90)
+summary(sbnf_nb_90)
+sbnf_nb_90_summary <- broom::tidy(sbnf_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(sbnf_10_30, aes(sample=n)) + geom_qq() #
+ggplot(sbnf_30_60, aes(sample=n)) + geom_qq() #
+ggplot(sbnf_60_90, aes(sample=n)) + geom_qq() #
+ggplot(sbnf_90, aes(sample=n)) + geom_qq() #
+
+```
+
+## Elevation
+
+### 1,000-1,499
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev1 <- vtm_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(x10_2_30_4:x61_0_91_3,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+
+fia_elev1 <- fia_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(area = 672.45)
+
+elev1 <- rbind(vtm_elev1, fia_elev1) 
+
+vtm_elev1_10_30 <- vtm_elev1 %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev1_30_60 <- vtm_elev1 %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev1_60_90 <- vtm_elev1 %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev1_90 <- vtm_elev1 %>%  filter(dbh_class == "x91_4")
+
+fia_elev1_10_30 <- fia_elev1 %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev1_30_60 <- fia_elev1 %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev1_60_90 <- fia_elev1 %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev1_90 <- fia_elev1 %>%  filter(dbh_class == "x91_4")
+
+
+
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev1_test_10_30 <- t.test(fia_elev1_10_30$stem_density, vtm_elev1_10_30$stem_density, paired = F )
+elev1_test_30_60 <- t.test(fia_elev1_30_60$stem_density, vtm_elev1_30_60$stem_density, paired = F )
+elev1_test_60_90 <- t.test(fia_elev1_60_90$stem_density, vtm_elev1_60_90$stem_density, paired = F )
+elev1_test_90 <- t.test(fia_elev1_90$stem_density, vtm_elev1_90$stem_density, paired = F )
+
+# test summary
+elev1_10_30_test_summary <- broom::tidy(elev1_test_10_30)
+elev1_30_60_test_summary <- broom::tidy(elev1_test_30_60)
+elev1_60_90_test_summary <- broom::tidy(elev1_test_60_90)
+elev1_90_test_summary <- broom::tidy(elev1_test_90)
+
+#cohen's d
+elev1_10_30_effectsize <- effsize::cohen.d(fia_elev1_10_30$stem_density, vtm_elev1_10_30$stem_density)
+elev1_30_60_effectsize <- effsize::cohen.d(fia_elev1_30_60$stem_density, vtm_elev1_30_60$stem_density)
+elev1_60_90_effectsize <- effsize::cohen.d(fia_elev1_60_90$stem_density, vtm_elev1_60_90$stem_density)
+elev1_90_effectsize <- effsize::cohen.d(fia_elev1_90$stem_density, vtm_elev1_90$stem_density)
+
+elev1_10_30_effectsize_df <- as.data.frame(elev1_10_30_effectsize$estimate) 
+elev1_30_60_effectsize_df <- as.data.frame(elev1_30_60_effectsize$estimate) 
+elev1_60_90_effectsize_df <- as.data.frame(elev1_60_90_effectsize$estimate) 
+elev1_90_effectsize_df <- as.data.frame(elev1_90_effectsize$estimate) 
+ 
+
+######################################## negative binomial #######################################
+
+vtm_elev1 <- vtm_tidy %>%
+  filter(elevation_class == "1,000-1,500") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(x10_2_30_4:x61_0_91_3,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev1 <- fia_tidy %>%
+  filter(elevation_class == "1,000-1,500") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) %>% 
+  mutate(n= as.numeric(n))
+
+vtm_elev1 <- inner_join(vtm_elev1, vtm_slope, by = "plotkey")
+fia_elev1 <- inner_join(fia_elev1, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev1 <- rbind(vtm_elev1, fia_elev1)
+
+elev1_10_30 <- elev1 %>% filter (dbh_class == "x10_2_30_4")
+elev1_30_60 <- elev1 %>% filter (dbh_class == "x30_5_60_9")
+elev1_60_90 <- elev1 %>% filter (dbh_class == "x61_0_91_3")
+elev1_90 <- elev1 %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev1_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1_10_30)
+summary(elev1_nb_10_30)
+elev1_nb_10_30_summary <- broom::tidy(elev1_nb_10_30)
+
+elev1_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1_30_60)
+summary(elev1_nb_30_60)
+elev1_nb_30_60_summary <- broom::tidy(elev1_nb_30_60)
+
+elev1_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1_60_90)
+summary(elev1_nb_60_90)
+elev1_nb_60_90_summary <- broom::tidy(elev1_nb_60_90)
+
+elev1_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1_90)
+summary(elev1_nb_90)
+elev1_nb_90_summary <- broom::tidy(elev1_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev1_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev1_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev1_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev1_90, aes(sample=n)) + geom_qq() #
+```
+
+### 1,500-2,000
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev2 <- vtm_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+
+fia_elev2 <- fia_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(area = 672.45)
+
+elev2 <- rbind(vtm_elev2, fia_elev2) 
+
+vtm_elev2_10_30 <- vtm_elev2 %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev2_30_60 <- vtm_elev2 %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev2_60_90 <- vtm_elev2 %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev2_90 <- vtm_elev2 %>%  filter(dbh_class == "x91_4")
+
+fia_elev2_10_30 <- fia_elev2 %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev2_30_60 <- fia_elev2 %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev2_60_90 <- fia_elev2 %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev2_90 <- fia_elev2 %>%  filter(dbh_class == "x91_4")
+
+######################################### sample size ##########################################
+
+vtm_elev2_n <- nrow(vtm_elev2)
+fia_elev2_n <- nrow(fia_elev2)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+# ggplot(elev2, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+# 
+# ggplot(vtm_elev2, aes(sample=stem_density)) + geom_qq() # points kinda curved
+# ggplot(fia_elev2, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev2_test_10_30 <- t.test(fia_elev2_10_30$stem_density, vtm_elev2_10_30$stem_density, paired = F )
+elev2_test_30_60 <- t.test(fia_elev2_30_60$stem_density, vtm_elev2_30_60$stem_density, paired = F )
+elev2_test_60_90 <- t.test(fia_elev2_60_90$stem_density, vtm_elev2_60_90$stem_density, paired = F )
+elev2_test_90 <- t.test(fia_elev2_90$stem_density, vtm_elev2_90$stem_density, paired = F )
+
+# test summary
+elev2_10_30_test_summary <- broom::tidy(elev2_test_10_30)
+elev2_30_60_test_summary <- broom::tidy(elev2_test_30_60)
+elev2_60_90_test_summary <- broom::tidy(elev2_test_60_90)
+elev2_90_test_summary <- broom::tidy(elev2_test_90)
+
+#cohen's d
+elev2_10_30_effectsize <- effsize::cohen.d(fia_elev2_10_30$stem_density, vtm_elev2_10_30$stem_density)
+elev2_30_60_effectsize <- effsize::cohen.d(fia_elev2_30_60$stem_density, vtm_elev2_30_60$stem_density)
+elev2_60_90_effectsize <- effsize::cohen.d(fia_elev2_60_90$stem_density, vtm_elev2_60_90$stem_density)
+elev2_90_effectsize <- effsize::cohen.d(fia_elev2_90$stem_density, vtm_elev2_90$stem_density)
+
+elev2_10_30_effectsize_df <- as.data.frame(elev2_10_30_effectsize$estimate) 
+elev2_30_60_effectsize_df <- as.data.frame(elev2_30_60_effectsize$estimate) 
+elev2_60_90_effectsize_df <- as.data.frame(elev2_60_90_effectsize$estimate) 
+elev2_90_effectsize_df <- as.data.frame(elev2_90_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev2 <- vtm_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev2 <- fia_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev2 <- inner_join(vtm_elev2, vtm_slope, by = "plotkey")
+fia_elev2 <- inner_join(fia_elev2, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev2 <- rbind(vtm_elev2, fia_elev2)
+
+elev2_10_30 <- elev2 %>% filter (dbh_class == "x10_2_30_4")
+elev2_30_60 <- elev2 %>% filter (dbh_class == "x30_5_60_9")
+elev2_60_90 <- elev2 %>% filter (dbh_class == "x61_0_91_3")
+elev2_90 <- elev2 %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev2_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2_10_30)
+summary(elev2_nb_10_30)
+elev2_nb_10_30_summary <- broom::tidy(elev2_nb_10_30)
+
+elev2_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2_30_60)
+summary(elev2_nb_30_60)
+elev2_nb_30_60_summary <- broom::tidy(elev2_nb_30_60)
+
+elev2_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2_60_90)
+summary(elev2_nb_60_90)
+elev2_nb_60_90_summary <- broom::tidy(elev2_nb_60_90)
+
+elev2_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2_90)
+summary(elev2_nb_90)
+elev2_nb_90_summary <- broom::tidy(elev2_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev2_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev2_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev2_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev2_90, aes(sample=n)) + geom_qq() #
+
+```
+
+### 2,000-2,499
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev3 <- vtm_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  #dplyr::select(-plotkey) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+# 
+fia_elev3 <- fia_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(area = 672.45)
+
+elev3 <- rbind(vtm_elev3, fia_elev3) 
+
+vtm_elev3_10_30 <- vtm_elev3 %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev3_30_60 <- vtm_elev3 %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev3_60_90 <- vtm_elev3 %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev3_90 <- vtm_elev3 %>%  filter(dbh_class == "x91_4")
+
+fia_elev3_10_30 <- fia_elev3 %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev3_30_60 <- fia_elev3 %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev3_60_90 <- fia_elev3 %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev3_90 <- fia_elev3 %>%  filter(dbh_class == "x91_4")
+
+
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev3_test_10_30 <- t.test(fia_elev3_10_30$stem_density, vtm_elev3_10_30$stem_density, paired = F )
+elev3_test_30_60 <- t.test(fia_elev3_30_60$stem_density, vtm_elev3_30_60$stem_density, paired = F )
+elev3_test_60_90 <- t.test(fia_elev3_60_90$stem_density, vtm_elev3_60_90$stem_density, paired = F )
+elev3_test_90 <- t.test(fia_elev3_90$stem_density, vtm_elev3_90$stem_density, paired = F )
+
+# test summary
+elev3_10_30_test_summary <- broom::tidy(elev3_test_10_30)
+elev3_30_60_test_summary <- broom::tidy(elev3_test_30_60)
+elev3_60_90_test_summary <- broom::tidy(elev3_test_60_90)
+elev3_90_test_summary <- broom::tidy(elev3_test_90)
+
+#cohen's d
+elev3_10_30_effectsize <- effsize::cohen.d(fia_elev3_10_30$stem_density, vtm_elev3_10_30$stem_density)
+elev3_30_60_effectsize <- effsize::cohen.d(fia_elev3_30_60$stem_density, vtm_elev3_30_60$stem_density)
+elev3_60_90_effectsize <- effsize::cohen.d(fia_elev3_60_90$stem_density, vtm_elev3_60_90$stem_density)
+elev3_90_effectsize <- effsize::cohen.d(fia_elev3_90$stem_density, vtm_elev3_90$stem_density)
+
+elev3_10_30_effectsize_df <- as.data.frame(elev3_10_30_effectsize$estimate) 
+elev3_30_60_effectsize_df <- as.data.frame(elev3_30_60_effectsize$estimate) 
+elev3_60_90_effectsize_df <- as.data.frame(elev3_60_90_effectsize$estimate) 
+elev3_90_effectsize_df <- as.data.frame(elev3_90_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+vtm_elev3 <- vtm_tidy %>%
+  filter(elevation_class == "2,000-2,500") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev3 <- fia_tidy %>%
+  filter(elevation_class == "2,000-2,500") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>%
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev3 <- inner_join(vtm_elev3, vtm_slope, by = "plotkey")
+fia_elev3 <- inner_join(fia_elev3, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+
+elev3 <- rbind(vtm_elev3, fia_elev3)
+
+elev3_10_30 <- elev3 %>% filter (dbh_class == "x10_2_30_4")
+elev3_30_60 <- elev3 %>% filter (dbh_class == "x30_5_60_9")
+elev3_60_90 <- elev3 %>% filter (dbh_class == "x61_0_91_3")
+elev3_90 <- elev3 %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev3_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3_10_30)
+summary(elev3_nb_10_30)
+elev3_nb_10_30_summary <- broom::tidy(elev3_nb_10_30)
+
+elev3_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3_30_60)
+summary(elev3_nb_30_60)
+elev3_nb_30_60_summary <- broom::tidy(elev3_nb_30_60)
+
+elev3_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3_60_90)
+summary(elev3_nb_60_90)
+elev3_nb_60_90_summary <- broom::tidy(elev3_nb_60_90)
+
+elev3_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3_90)
+summary(elev3_nb_90)
+elev3_nb_90_summary <- broom::tidy(elev3_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev3_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev3_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev3_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev3_90, aes(sample=n)) + geom_qq() #
+
+```
+
+### 2,500+
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev4 <- vtm_tidy %>% 
+  filter(elevation_class == "2,500+") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(x10_2_30_4:x30_5_60_9,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  #dplyr::select(-plotkey) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+
+fia_elev4 <- fia_tidy %>% 
+  filter(elevation_class == "2,500+") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(area = 672.45)
+
+#elev4 <- rbind(vtm_elev4, fia_elev4) 
+
+vtm_elev4_10_30 <- vtm_elev4 %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev4_30_60 <- vtm_elev4 %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev4_60_90 <- vtm_elev4 %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev4_90 <- vtm_elev4 %>%  filter(dbh_class == "x91_4")
+
+fia_elev4_10_30 <- fia_elev4 %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev4_30_60 <- fia_elev4 %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev4_60_90 <- fia_elev4 %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev4_90 <- fia_elev4 %>%  filter(dbh_class == "x91_4")
+
+
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev4_test_10_30 <- t.test(fia_elev4_10_30$stem_density, vtm_elev4_10_30$stem_density, paired = F )
+elev4_test_30_60 <- t.test(fia_elev4_30_60$stem_density, vtm_elev4_30_60$stem_density, paired = F )
+elev4_test_60_90 <- t.test(fia_elev4_60_90$stem_density, vtm_elev4_60_90$stem_density, paired = F )
+elev4_test_90 <- t.test(fia_elev4_90$stem_density, vtm_elev4_90$stem_density, paired = F )
+
+# test summary
+elev4_10_30_test_summary <- broom::tidy(elev4_test_10_30)
+elev4_30_60_test_summary <- broom::tidy(elev4_test_30_60)
+elev4_60_90_test_summary <- broom::tidy(elev4_test_60_90)
+elev4_90_test_summary <- broom::tidy(elev4_test_90)
+
+#cohen's d
+elev4_10_30_effectsize <- effsize::cohen.d(fia_elev4_10_30$stem_density, vtm_elev4_10_30$stem_density)
+elev4_30_60_effectsize <- effsize::cohen.d(fia_elev4_30_60$stem_density, vtm_elev4_30_60$stem_density)
+elev4_60_90_effectsize <- effsize::cohen.d(fia_elev4_60_90$stem_density, vtm_elev4_60_90$stem_density)
+elev4_90_effectsize <- effsize::cohen.d(fia_elev4_90$stem_density, vtm_elev4_90$stem_density)
+
+elev4_10_30_effectsize_df <- as.data.frame(elev4_10_30_effectsize$estimate) 
+elev4_30_60_effectsize_df <- as.data.frame(elev4_30_60_effectsize$estimate) 
+elev4_60_90_effectsize_df <- as.data.frame(elev4_60_90_effectsize$estimate) 
+elev4_90_effectsize_df <- as.data.frame(elev4_90_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+vtm_elev4 <- vtm_tidy %>%
+  filter(elevation_class == "2,500+") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM")
+
+fia_elev4 <- fia_tidy %>%
+  filter(elevation_class == "2,500+") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>%
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev4 <- inner_join(vtm_elev4, vtm_slope, by = "plotkey")
+fia_elev4 <- inner_join(fia_elev4, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev4 <- rbind(vtm_elev4, fia_elev4)
+
+elev4_10_30 <- elev4 %>% filter (dbh_class == "x10_2_30_4")
+elev4_30_60 <- elev4 %>% filter (dbh_class == "x30_5_60_9")
+elev4_60_90 <- elev4 %>% filter (dbh_class == "x61_0_91_3")
+elev4_90 <- elev4 %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev4_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4_10_30)
+summary(elev4_nb_10_30)
+elev4_nb_10_30_summary <- broom::tidy(elev4_nb_10_30)
+
+elev4_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4_30_60)
+summary(elev4_nb_30_60)
+elev4_nb_30_60_summary <- broom::tidy(elev4_nb_30_60)
+
+elev4_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4_60_90)
+summary(elev4_nb_60_90)
+elev4_nb_60_90_summary <- broom::tidy(elev4_nb_60_90)
+
+elev4_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4_90)
+summary(elev4_nb_90)
+elev4_nb_90_summary <- broom::tidy(elev4_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev4_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev4_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev4_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev4_90, aes(sample=n)) + geom_qq() #
+```
+
+
+## Elevation and oaks
+
+### 1,000-1,499
+
+num plots with oaks at 1000-1499m elevation
+
+VTM (12 total unique plots)
+- 10-30cm: 10
+- 30-60cm: 11
+- 60-90cm: 4
+- 90+cm: 3
+
+FIA (17 total plots)
+- 10-30cm: 15
+- 30-60cm: 13
+- 60-90cm: 8
+- 90+cm: 3
+
+```{r}
+##################################### set up data ##################################### 
+vtm_elev1o <- vtm_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  filter(lifeform == "Oaks") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(x10_2_30_4:x61_0_91_3,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev1o <- fia_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  filter(lifeform == "Oaks") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+elev1o <- rbind(vtm_elev1o, fia_elev1o) 
+
+vtm_elev1o_10_30 <- vtm_elev1o %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev1o_30_60 <- vtm_elev1o %>%  filter(dbh_class == "x30_5_60_9")
+
+fia_elev1o_10_30 <- fia_elev1o %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev1o_30_60 <- fia_elev1o %>%  filter(dbh_class == "x30_5_60_9")
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev1o_test_10_30 <- t.test(fia_elev1o_10_30$stem_density, vtm_elev1o_10_30$stem_density, paired = F )
+elev1o_test_30_60 <- t.test(fia_elev1o_30_60$stem_density, vtm_elev1o_30_60$stem_density, paired = F )
+
+# test summary
+elev1o_10_30_test_summary <- broom::tidy(elev1o_test_10_30)
+elev1o_30_60_test_summary <- broom::tidy(elev1o_test_30_60)
+
+#cohen's d
+elev1o_10_30_effectsize <- effsize::cohen.d(fia_elev1o_10_30$stem_density, vtm_elev1o_10_30$stem_density)
+elev1o_30_60_effectsize <- effsize::cohen.d(fia_elev1o_30_60$stem_density, vtm_elev1o_30_60$stem_density)
+
+elev1o_10_30_effectsize_df <- as.data.frame(elev1o_10_30_effectsize$estimate) 
+elev1o_30_60_effectsize_df <- as.data.frame(elev1o_30_60_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev1o <- vtm_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev1o <- fia_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev1o <- inner_join(vtm_elev1o, vtm_slope, by = "plotkey")
+fia_elev1o <- inner_join(fia_elev1o, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev1o <- rbind(vtm_elev1o, fia_elev1o)
+
+elev1o_10_30 <- elev1o %>% filter (dbh_class == "x10_2_30_4")
+elev1o_30_60 <- elev1o %>% filter (dbh_class == "x30_5_60_9")
+
+##### model
+elev1o_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1o_10_30)
+summary(elev1o_nb_10_30)
+elev1o_nb_10_30_summary <- broom::tidy(elev1o_nb_10_30)
+
+elev1o_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1o_30_60)
+summary(elev1o_nb_30_60)
+elev1o_nb_30_60_summary <- broom::tidy(elev1o_nb_30_60)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev1o_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev1o_30_60, aes(sample=n)) + geom_qq() #
+
+
+```
+
+### 1,500-2,000
+
+num plots with oaks at 1500-2000m elevation
+
+VTM (54 total unique plots)
+- 10-30cm: 43
+- 30-60cm: 29
+- 60-90cm: 19
+- 90+cm: 8
+
+FIA (63 total unique plots)
+- 10-30cm: 58
+- 30-60cm: 43
+- 60-90cm: 18
+- 90+cm: 5
+
+```{r}
+##################################### set up data ##################################### 
+vtm_elev2o <- vtm_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  filter(lifeform == "Oaks") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(x10_2_30_4:x61_0_91_3,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev2o <- fia_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  filter(lifeform == "Oaks") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>%
+  pivot_longer(4:7,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+elev2o <- rbind(vtm_elev2o, fia_elev2o) 
+
+vtm_elev2o_10_30 <- vtm_elev2o %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev2o_30_60 <- vtm_elev2o %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev2o_60_90 <- vtm_elev2o %>%  filter(dbh_class == "x61_0_91_3")
+
+fia_elev2o_10_30 <- fia_elev2o %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev2o_30_60 <- fia_elev2o %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev2o_60_90 <- fia_elev2o %>%  filter(dbh_class == "x61_0_91_3")
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev2o_test_10_30 <- t.test(fia_elev2o_10_30$stem_density, vtm_elev2o_10_30$stem_density, paired = F )
+elev2o_test_30_60 <- t.test(fia_elev2o_30_60$stem_density, vtm_elev2o_30_60$stem_density, paired = F )
+elev2o_test_60_90 <- t.test(fia_elev2o_60_90$stem_density, vtm_elev2o_60_90$stem_density, paired = F )
+
+# test summary
+elev2o_10_30_test_summary <- broom::tidy(elev2o_test_10_30)
+elev2o_30_60_test_summary <- broom::tidy(elev2o_test_30_60)
+elev2o_60_90_test_summary <- broom::tidy(elev2o_test_60_90)
+
+#cohen's d
+elev2o_10_30_effectsize <- effsize::cohen.d(fia_elev2o_10_30$stem_density, vtm_elev2o_10_30$stem_density)
+elev2o_30_60_effectsize <- effsize::cohen.d(fia_elev2o_30_60$stem_density, vtm_elev2o_30_60$stem_density)
+elev2o_60_90_effectsize <- effsize::cohen.d(fia_elev2o_60_90$stem_density, vtm_elev2o_60_90$stem_density)
+
+elev2o_10_30_effectsize_df <- as.data.frame(elev2o_10_30_effectsize$estimate) 
+elev2o_30_60_effectsize_df <- as.data.frame(elev2o_30_60_effectsize$estimate) 
+elev2o_60_90_effectsize_df <- as.data.frame(elev2o_60_90_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev2o <- vtm_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev2o <- fia_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev2o <- inner_join(vtm_elev2o, vtm_slope, by = "plotkey")
+fia_elev2o <- inner_join(fia_elev2o, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev2o <- rbind(vtm_elev2o, fia_elev2o)
+
+elev2o_10_30 <- elev2o %>% filter (dbh_class == "x10_2_30_4")
+elev2o_30_60 <- elev2o %>% filter (dbh_class == "x30_5_60_9")
+elev2o_60_90 <- elev2o %>% filter (dbh_class == "x61_0_91_3")
+
+
+##### model
+elev2o_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2o_10_30)
+summary(elev2o_nb_10_30)
+elev2o_nb_10_30_summary <- broom::tidy(elev2o_nb_10_30)
+
+elev2o_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2o_30_60)
+summary(elev2o_nb_30_60)
+elev2o_nb_30_60_summary <- broom::tidy(elev2o_nb_30_60)
+
+elev2o_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2o_60_90)
+summary(elev2o_nb_60_90)
+elev2o_nb_60_90_summary <- broom::tidy(elev2o_nb_60_90)
+
+
+##################################### Check assumptions ############################################
+
+ggplot(elev2o_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev2o_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev2o_60_90, aes(sample=n)) + geom_qq() #
+
+```
+
+### 2,000-2,500
+
+num plots with oaks at 1500-2000m elevation
+
+VTM (12 total unique plots)
+- 10-30cm: 11
+- 30-60cm: 4
+- 60-90cm: 1
+- 90+cm: 0
+
+FIA (17 total unique plots)
+- 10-30cm: 16
+- 30-60cm: 17
+- 60-90cm: 5
+- 90+cm: 0
+
+```{r}
+##################################### set up data ##################################### 
+vtm_elev3o <- vtm_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(lifeform == "Oaks") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0")) %>%
+  ungroup() %>% 
+  pivot_longer(3:5,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  #dplyr::select(-plotkey) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev3o <- fia_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(lifeform == "Oaks") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0")) %>%
+  pivot_longer(4:6,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+elev3o <- rbind(vtm_elev3o, fia_elev3o) 
+
+vtm_elev3o_10_30 <- vtm_elev3o %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev3o_10_30 <- fia_elev3o %>%  filter(dbh_class == "x10_2_30_4")
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev3o_test_10_30 <- t.test(fia_elev3o_10_30$stem_density, vtm_elev3o_10_30$stem_density, paired = F )
+
+# test summary
+elev3o_10_30_test_summary <- broom::tidy(elev3o_test_10_30)
+
+#cohen's d
+elev3o_10_30_effectsize <- effsize::cohen.d(fia_elev3o_10_30$stem_density, vtm_elev3o_10_30$stem_density)
+
+elev3o_10_30_effectsize_df <- as.data.frame(elev3o_10_30_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev3o <- vtm_tidy %>%
+  filter(elevation_class == "2,000-2,500") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev3o <- fia_tidy %>%
+  filter(elevation_class == "2,000-2,500") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0")) %>%
+  pivot_longer(2:4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev3o <- inner_join(vtm_elev3o, vtm_slope, by = "plotkey")
+fia_elev3o <- inner_join(fia_elev3o, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev3o <- rbind(vtm_elev3o, fia_elev3o)
+
+elev3o_10_30 <- elev3o %>% filter (dbh_class == "x10_2_30_4")
+
+
+##### model
+elev3o_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3o_10_30)
+summary(elev3o_nb_10_30)
+elev3o_nb_10_30_summary <- broom::tidy(elev3o_nb_10_30)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev3o_10_30, aes(sample=n)) + geom_qq() #
+
+```
+
+### 2,500+
+
+Theres n VTM plots with oaks above 2500m and only 3 fia plts have oaks above 2500m (all 3 plots only had oaks in the 10-30cm size class)
+
+
+## Elevation and Conifers
+
+### 1,000-1,500
+
+num plots with oaks at 1500-2000m elevation
+
+VTM (20 total unique plots)
+- 10-30cm: 17
+- 30-60cm: 18
+- 60-90cm: 13
+- 90+cm: 9
+
+FIA (26 total unique plots)
+- 10-30cm: 16
+- 30-60cm: 20
+- 60-90cm: 24
+- 90+cm: 13
+
+```{r}
+##################################### set up data ##################################### 
+vtm_elev1c <- vtm_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(x10_2_30_4:x61_0_91_3,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev1c <- fia_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(4:7,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+elev1c <- rbind(vtm_elev1c, fia_elev1c) 
+
+vtm_elev1c_10_30 <- vtm_elev1c %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev1c_30_60 <- vtm_elev1c %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev1c_60_90 <- vtm_elev1c %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev1c_90 <- vtm_elev1c %>%  filter(dbh_class == "x91_4")
+
+fia_elev1c_10_30 <- fia_elev1c %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev1c_30_60 <- fia_elev1c %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev1c_60_90 <- fia_elev1c %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev1c_90 <- fia_elev1c %>%  filter(dbh_class == "x91_4")
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev1c_test_10_30 <- t.test(fia_elev1c_10_30$stem_density, vtm_elev1c_10_30$stem_density, paired = F )
+elev1c_test_30_60 <- t.test(fia_elev1c_30_60$stem_density, vtm_elev1c_30_60$stem_density, paired = F )
+elev1c_test_60_90 <- t.test(fia_elev1c_60_90$stem_density, vtm_elev1c_60_90$stem_density, paired = F )
+elev1c_test_90 <- t.test(fia_elev1c_90$stem_density, vtm_elev1c_90$stem_density, paired = F )
+
+# test summary
+elev1c_10_30_test_summary <- broom::tidy(elev1c_test_10_30)
+elev1c_30_60_test_summary <- broom::tidy(elev1c_test_30_60)
+elev1c_60_90_test_summary <- broom::tidy(elev1c_test_60_90)
+elev1c_90_test_summary <- broom::tidy(elev1c_test_90)
+
+#cohen's d
+elev1c_10_30_effectsize <- effsize::cohen.d(fia_elev1c_10_30$stem_density, vtm_elev1c_10_30$stem_density)
+elev1c_30_60_effectsize <- effsize::cohen.d(fia_elev1c_30_60$stem_density, vtm_elev1c_30_60$stem_density)
+elev1c_60_90_effectsize <- effsize::cohen.d(fia_elev1c_60_90$stem_density, vtm_elev1c_60_90$stem_density)
+elev1c_90_effectsize <- effsize::cohen.d(fia_elev1c_90$stem_density, vtm_elev1c_90$stem_density)
+
+elev1c_10_30_effectsize_df <- as.data.frame(elev1c_10_30_effectsize$estimate) 
+elev1c_30_60_effectsize_df <- as.data.frame(elev1c_30_60_effectsize$estimate) 
+elev1c_60_90_effectsize_df <- as.data.frame(elev1c_60_90_effectsize$estimate) 
+elev1c_90_effectsize_df <- as.data.frame(elev1c_90_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev1c <- vtm_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev1c <- fia_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev1c <- inner_join(vtm_elev1c, vtm_slope, by = "plotkey")
+fia_elev1c <- inner_join(fia_elev1c, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev1c <- rbind(vtm_elev1c, fia_elev1c)
+
+elev1c_10_30 <- elev1c %>% filter (dbh_class == "x10_2_30_4")
+elev1c_30_60 <- elev1c %>% filter (dbh_class == "x30_5_60_9")
+elev1c_60_90 <- elev1c %>% filter (dbh_class == "x61_0_91_3")
+elev1c_90 <- elev1c %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev1c_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1c_10_30)
+summary(elev1c_nb_10_30)
+elev1c_nb_10_30_summary <- broom::tidy(elev1c_nb_10_30)
+
+elev1c_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1c_30_60)
+summary(elev1c_nb_30_60)
+elev1c_nb_30_60_summary <- broom::tidy(elev1c_nb_30_60)
+
+elev1c_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1c_60_90)
+summary(elev1c_nb_60_90)
+elev1c_nb_60_90_summary <- broom::tidy(elev1c_nb_60_90)
+
+elev1c_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1c_90)
+summary(elev1c_nb_90)
+elev1c_nb_90_summary <- broom::tidy(elev1c_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev1c_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev1c_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev1c_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev1c_90, aes(sample=n)) + geom_qq() #
+
+```
+
+### 1,500-2,000
+
+num plots with oaks at 1500-2000m elevation
+
+VTM (84 total unique plots)
+- 10-30cm: 73
+- 30-60cm: 68
+- 60-90cm: 60
+- 90+cm: 46
+
+FIA (80 total unique plots)
+- 10-30cm: 60
+- 30-60cm: 65
+- 60-90cm: 75
+- 90+cm: 43
+
+```{r}
+##################################### set up data ##################################### 
+vtm_elev2c <- vtm_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev2c <- fia_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(4:7,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+elev2c <- rbind(vtm_elev2c, fia_elev2c) 
+
+vtm_elev2c_10_30 <- vtm_elev2c %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev2c_30_60 <- vtm_elev2c %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev2c_60_90 <- vtm_elev2c %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev2c_90 <- vtm_elev2c %>%  filter(dbh_class == "x91_4")
+
+fia_elev2c_10_30 <- fia_elev2c %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev2c_30_60 <- fia_elev2c %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev2c_60_90 <- fia_elev2c %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev2c_90 <- fia_elev2c %>%  filter(dbh_class == "x91_4")
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev2c_test_10_30 <- t.test(fia_elev2c_10_30$stem_density, vtm_elev2c_10_30$stem_density, paired = F )
+elev2c_test_30_60 <- t.test(fia_elev2c_30_60$stem_density, vtm_elev2c_30_60$stem_density, paired = F )
+elev2c_test_60_90 <- t.test(fia_elev2c_60_90$stem_density, vtm_elev2c_60_90$stem_density, paired = F )
+elev2c_test_90 <- t.test(fia_elev2c_90$stem_density, vtm_elev2c_90$stem_density, paired = F )
+
+# test summary
+elev2c_10_30_test_summary <- broom::tidy(elev2c_test_10_30)
+elev2c_30_60_test_summary <- broom::tidy(elev2c_test_30_60)
+elev2c_60_90_test_summary <- broom::tidy(elev2c_test_60_90)
+elev2c_90_test_summary <- broom::tidy(elev2c_test_90)
+
+#cohen's d
+elev2c_10_30_effectsize <- effsize::cohen.d(fia_elev2c_10_30$stem_density, vtm_elev2c_10_30$stem_density)
+elev2c_30_60_effectsize <- effsize::cohen.d(fia_elev2c_30_60$stem_density, vtm_elev2c_30_60$stem_density)
+elev2c_60_90_effectsize <- effsize::cohen.d(fia_elev2c_60_90$stem_density, vtm_elev2c_60_90$stem_density)
+elev2c_90_effectsize <- effsize::cohen.d(fia_elev2c_90$stem_density, vtm_elev2c_90$stem_density)
+
+elev2c_10_30_effectsize_df <- as.data.frame(elev2c_10_30_effectsize$estimate) 
+elev2c_30_60_effectsize_df <- as.data.frame(elev2c_30_60_effectsize$estimate) 
+elev2c_60_90_effectsize_df <- as.data.frame(elev2c_60_90_effectsize$estimate) 
+elev2c_90_effectsize_df <- as.data.frame(elev2c_90_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev2c <- vtm_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev2c <- fia_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev2c <- inner_join(vtm_elev2c, vtm_slope, by = "plotkey")
+fia_elev2c <- inner_join(fia_elev2c, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev2c <- rbind(vtm_elev2c, fia_elev2c)
+
+elev2c_10_30 <- elev2c %>% filter (dbh_class == "x10_2_30_4")
+elev2c_30_60 <- elev2c %>% filter (dbh_class == "x30_5_60_9")
+elev2c_60_90 <- elev2c %>% filter (dbh_class == "x61_0_91_3")
+elev2c_90 <- elev2c %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev2c_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2c_10_30)
+summary(elev2c_nb_10_30)
+elev2c_nb_10_30_summary <- broom::tidy(elev2c_nb_10_30)
+
+elev2c_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2c_30_60)
+summary(elev2c_nb_30_60)
+elev2c_nb_30_60_summary <- broom::tidy(elev2c_nb_30_60)
+
+elev2c_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2c_60_90)
+summary(elev2c_nb_60_90)
+elev2c_nb_60_90_summary <- broom::tidy(elev2c_nb_60_90)
+
+elev2c_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2c_90)
+summary(elev2c_nb_90)
+elev2c_nb_90_summary <- broom::tidy(elev2c_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev2c_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev2c_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev2c_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev2c_90, aes(sample=n)) + geom_qq() #
+
+```
+
+### 2,000-2,500
+
+num plots with oaks at 1500-2000m elevation
+
+VTM (77 total unique plots)
+- 10-30cm: 57
+- 30-60cm: 66
+- 60-90cm: 61
+- 90+cm: 55
+
+FIA (78 total unique plots)
+- 10-30cm: 65
+- 30-60cm: 70
+- 60-90cm: 73
+- 90+cm: 57
+
+```{r}
+##################################### set up data ##################################### 
+vtm_elev3c <- vtm_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev3c <- fia_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(4:7,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+elev3c <- rbind(vtm_elev3c, fia_elev3c) 
+
+vtm_elev3c_10_30 <- vtm_elev3c %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev3c_30_60 <- vtm_elev3c %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev3c_60_90 <- vtm_elev3c %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev3c_90 <- vtm_elev3c %>%  filter(dbh_class == "x91_4")
+
+fia_elev3c_10_30 <- fia_elev3c %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev3c_30_60 <- fia_elev3c %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev3c_60_90 <- fia_elev3c %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev3c_90 <- fia_elev3c %>%  filter(dbh_class == "x91_4")
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev3c_test_10_30 <- t.test(fia_elev3c_10_30$stem_density, vtm_elev3c_10_30$stem_density, paired = F )
+elev3c_test_30_60 <- t.test(fia_elev3c_30_60$stem_density, vtm_elev3c_30_60$stem_density, paired = F )
+elev3c_test_60_90 <- t.test(fia_elev3c_60_90$stem_density, vtm_elev3c_60_90$stem_density, paired = F )
+elev3c_test_90 <- t.test(fia_elev3c_90$stem_density, vtm_elev3c_90$stem_density, paired = F )
+
+# test summary
+elev3c_10_30_test_summary <- broom::tidy(elev3c_test_10_30)
+elev3c_30_60_test_summary <- broom::tidy(elev3c_test_30_60)
+elev3c_60_90_test_summary <- broom::tidy(elev3c_test_60_90)
+elev3c_90_test_summary <- broom::tidy(elev3c_test_90)
+
+#cohen's d
+elev3c_10_30_effectsize <- effsize::cohen.d(fia_elev3c_10_30$stem_density, vtm_elev3c_10_30$stem_density)
+elev3c_30_60_effectsize <- effsize::cohen.d(fia_elev3c_30_60$stem_density, vtm_elev3c_30_60$stem_density)
+elev3c_60_90_effectsize <- effsize::cohen.d(fia_elev3c_60_90$stem_density, vtm_elev3c_60_90$stem_density)
+elev3c_90_effectsize <- effsize::cohen.d(fia_elev3c_90$stem_density, vtm_elev3c_90$stem_density)
+
+elev3c_10_30_effectsize_df <- as.data.frame(elev3c_10_30_effectsize$estimate) 
+elev3c_30_60_effectsize_df <- as.data.frame(elev3c_30_60_effectsize$estimate) 
+elev3c_60_90_effectsize_df <- as.data.frame(elev3c_60_90_effectsize$estimate) 
+elev3c_90_effectsize_df <- as.data.frame(elev3c_90_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev3c <- vtm_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev3c <- fia_tidy %>%
+  filter(elevation_class == "1,500-2,000") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev3c <- inner_join(vtm_elev3c, vtm_slope, by = "plotkey")
+fia_elev3c <- inner_join(fia_elev3c, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev3c <- rbind(vtm_elev3c, fia_elev3c)
+
+elev3c_10_30 <- elev3c %>% filter (dbh_class == "x10_2_30_4")
+elev3c_30_60 <- elev3c %>% filter (dbh_class == "x30_5_60_9")
+elev3c_60_90 <- elev3c %>% filter (dbh_class == "x61_0_91_3")
+elev3c_90 <- elev3c %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev3c_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3c_10_30)
+summary(elev3c_nb_10_30)
+elev3c_nb_10_30_summary <- broom::tidy(elev3c_nb_10_30)
+
+elev3c_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3c_30_60)
+summary(elev3c_nb_30_60)
+elev3c_nb_30_60_summary <- broom::tidy(elev3c_nb_30_60)
+
+elev3c_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3c_60_90)
+summary(elev3c_nb_60_90)
+elev3c_nb_60_90_summary <- broom::tidy(elev3c_nb_60_90)
+
+elev3c_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3c_90)
+summary(elev3c_nb_90)
+elev3c_nb_90_summary <- broom::tidy(elev3c_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev3c_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev3c_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev3c_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev3c_90, aes(sample=n)) + geom_qq() #
+
+```
+
+
+
+### 2,500+
+
+num plots with oaks at 1500-2000m elevation
+
+VTM (13 total unique plots)
+- 10-30cm: 11
+- 30-60cm: 10
+- 60-90cm: 10
+- 90+cm: 6
+
+FIA (26 total unique plots)
+- 10-30cm: 18
+- 30-60cm: 17
+- 60-90cm: 26
+- 90+cm: 21
+
+```{r}
+##################################### set up data ##################################### 
+vtm_elev4c <- vtm_tidy %>% 
+  filter(elevation_class == "2,500+") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>% 
+  #dplyr::select(-plotkey) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev4c <- fia_tidy %>% 
+  filter(elevation_class == "2,500+") %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>%
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(4:7,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  mutate(stem_density = as.numeric(stem_density)) %>% 
+  ungroup() %>% 
+  dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+elev4c <- rbind(vtm_elev4c, fia_elev4c) 
+
+vtm_elev4c_10_30 <- vtm_elev4c %>%  filter(dbh_class == "x10_2_30_4")
+vtm_elev4c_30_60 <- vtm_elev4c %>%  filter(dbh_class == "x30_5_60_9")
+vtm_elev4c_60_90 <- vtm_elev4c %>%  filter(dbh_class == "x61_0_91_3")
+vtm_elev4c_90 <- vtm_elev4c %>%  filter(dbh_class == "x91_4")
+
+fia_elev4c_10_30 <- fia_elev4c %>%  filter(dbh_class == "x10_2_30_4")
+fia_elev4c_30_60 <- fia_elev4c %>%  filter(dbh_class == "x30_5_60_9")
+fia_elev4c_60_90 <- fia_elev4c %>%  filter(dbh_class == "x61_0_91_3")
+fia_elev4c_90 <- fia_elev4c %>%  filter(dbh_class == "x91_4")
+
+##################################### welchs 2 sample TWO-SIDED t-test ############################# 
+elev4c_test_10_30 <- t.test(fia_elev4c_10_30$stem_density, vtm_elev4c_10_30$stem_density, paired = F )
+elev4c_test_30_60 <- t.test(fia_elev4c_30_60$stem_density, vtm_elev4c_30_60$stem_density, paired = F )
+elev4c_test_60_90 <- t.test(fia_elev4c_60_90$stem_density, vtm_elev4c_60_90$stem_density, paired = F )
+elev4c_test_90 <- t.test(fia_elev4c_90$stem_density, vtm_elev4c_90$stem_density, paired = F )
+
+# test summary
+elev4c_10_30_test_summary <- broom::tidy(elev4c_test_10_30)
+elev4c_30_60_test_summary <- broom::tidy(elev4c_test_30_60)
+elev4c_60_90_test_summary <- broom::tidy(elev4c_test_60_90)
+elev4c_90_test_summary <- broom::tidy(elev4c_test_90)
+
+#cohen's d
+elev4c_10_30_effectsize <- effsize::cohen.d(fia_elev4c_10_30$stem_density, vtm_elev4c_10_30$stem_density)
+elev4c_30_60_effectsize <- effsize::cohen.d(fia_elev4c_30_60$stem_density, vtm_elev4c_30_60$stem_density)
+elev4c_60_90_effectsize <- effsize::cohen.d(fia_elev4c_60_90$stem_density, vtm_elev4c_60_90$stem_density)
+elev4c_90_effectsize <- effsize::cohen.d(fia_elev4c_90$stem_density, vtm_elev4c_90$stem_density)
+
+elev4c_10_30_effectsize_df <- as.data.frame(elev4c_10_30_effectsize$estimate) 
+elev4c_30_60_effectsize_df <- as.data.frame(elev4c_30_60_effectsize$estimate) 
+elev4c_60_90_effectsize_df <- as.data.frame(elev4c_60_90_effectsize$estimate) 
+elev4c_90_effectsize_df <- as.data.frame(elev4c_90_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+vtm_elev4c <- vtm_tidy %>%
+  filter(elevation_class == "2,500+") %>%
+  group_by(plotkey, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  ungroup() %>%
+  pivot_longer(2:5,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  mutate(time_frame = "VTM") 
+
+fia_elev4c <- fia_tidy %>%
+  filter(elevation_class == "2,500+") %>%
+  group_by(join_plot, dbh_class) %>%
+  tally() %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>%
+  clean_names() %>%
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>%
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>%
+  mutate(n = as.numeric(n)) %>%
+  ungroup() %>%
+  mutate(time_frame = "FIA")  %>% 
+  dplyr::rename(plotkey = join_plot) %>%
+  mutate(plotkey=as.character(plotkey)) 
+
+vtm_elev4c <- inner_join(vtm_elev4c, vtm_slope, by = "plotkey")
+fia_elev4c <- inner_join(fia_elev4c, fia_slope, by = "plotkey") %>% dplyr::select(-join_plot)
+
+elev4c <- rbind(vtm_elev4c, fia_elev4c)
+
+elev4c_10_30 <- elev4c %>% filter (dbh_class == "x10_2_30_4")
+elev4c_30_60 <- elev4c %>% filter (dbh_class == "x30_5_60_9")
+elev4c_60_90 <- elev4c %>% filter (dbh_class == "x61_0_91_3")
+elev4c_90 <- elev4c %>% filter (dbh_class == "x91_4")
+
+
+##### model
+elev4c_nb_10_30 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4c_10_30)
+summary(elev4c_nb_10_30)
+elev4c_nb_10_30_summary <- broom::tidy(elev4c_nb_10_30)
+
+elev4c_nb_30_60 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4c_30_60)
+summary(elev4c_nb_30_60)
+elev4c_nb_30_60_summary <- broom::tidy(elev4c_nb_30_60)
+
+elev4c_nb_60_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4c_60_90)
+summary(elev4c_nb_60_90)
+elev4c_nb_60_90_summary <- broom::tidy(elev4c_nb_60_90)
+
+elev4c_nb_90 <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4c_90)
+summary(elev4c_nb_90)
+elev4c_nb_90_summary <- broom::tidy(elev4c_nb_90)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev4c_10_30, aes(sample=n)) + geom_qq() #
+ggplot(elev4c_30_60, aes(sample=n)) + geom_qq() #
+ggplot(elev4c_60_90, aes(sample=n)) + geom_qq() #
+ggplot(elev4c_90, aes(sample=n)) + geom_qq() #
+
+```
+
+
+
+## Summary All Stats tests
+
+### Welch T tests
+```{r}
+
+################################## list of name of unique stats tests ###############################
+names <- c('All plots_10.2-30.4','All plots_30.5-60.9', 'All plots_61.0-91.3', 'All plots_91.4+',
+           "Lifeform - Conifers_10.2-30.4", "Lifeform - Conifers_30.5-60.9", "Lifeform - Conifers_61.0-91.3", "Lifeform - Conifers_91.4+",
+           "Lifeform - Oaks_10.2-30.4", "Lifeform - Oaks_30.5-60.9", "Lifeform - Oaks_61.0-91.3", "Lifeform - Oaks_91.4+","STFI_10.2-30.4","STFI_30.5-60.9","STFI_61.0-91.3","STFI_91.4+",
+           "SIFT_10.2-30.4", "SIFT_30.5-60.9", "SIFT_61.0-91.3", "SIFT_91.4+",
+           "ANF_10.2-30.4","ANF_30.5-60.9","ANF_61.0-91.3","ANF_91.4+",
+           "LPNF_10.2-30.4","LPNF_30.5-60.9","LPNF_61.0-91.3","LPNF_91.4+",
+           "SBNF_10.2-30.4","SBNF_30.5-60.9","SBNF_61.0-91.3","SBNF_91.4+",
+           "Elevation - 1000-1500_10.2-30.4","Elevation - 1000-1500_30.5-60.9","Elevation - 1000-1500_61.0-91.3","Elevation - 1000-1500_91.4+",
+           "Elevation - 1500-2000_10.2-30.4","Elevation - 1500-2000_30.5-60.9","Elevation - 1500-2000_61.0-91.3","Elevation - 1500-2000_91.4+",
+           "Elevation - 2000-2500_10.2-30.4", "Elevation - 2000-2500_30.5-60.9", "Elevation - 2000-2500_61.0-91.3", "Elevation - 2000-2500_91.4+",
+           "Elevation - 2500+_10.2-30.4","Elevation - 2500+_30.5-60.9","Elevation - 2500+_61.0-91.3","Elevation - 2500+_91.4+", "Elevation Oaks - 1000-1500_10.2-30.4","Elevation Oaks - 1000-1500_30.5-60.9",
+           "Elevation Oaks - 1500-2000_10.2-30.4","Elevation Oaks - 1500-2000_30.5-60.9","Elevation Oaks - 1500-2000_61.0-91.3",
+           "Elevation Oaks- 2000-2500_10.2-30.4", "Elevation Conifers - 1000-1500_10.2-30.4","Elevation Conifers - 1000-1500_30.5-60.9","Elevation Conifers - 1000-1500_61.0-91.3","Elevation Conifers - 1000-1500_91.4+",
+           "Elevation Conifers - 1500-2000_10.2-30.4","Elevation Conifers  - 1500-2000_30.5-60.9","Elevation Conifers - 1500-2000_61.0-91.3","Elevation Conifers - 1500-2000_91.4+",
+           "Elevation Conifers - 2000-2500_10.2-30.4", "Elevation Conifers - 2000-2500_30.5-60.9", "Elevation Conifers - 2000-2500_61.0-91.3", "Elevation Conifers - 2000-2500_91.4+",
+           "Elevation Conifers - 2500+_10.2-30.4","Elevation Conifers - 2500+_30.5-60.9","Elevation Conifers - 2500+_61.0-91.3")
+
+################################### Combine t-test results ################################## 
+tree_density_stats_summary <- rbind(
+  total_test_summary_10_30, total_test_summary_30_60, total_test_summary_60_90, total_test_summary_90,
+  lifeform_conifer_10_30_test_summary, lifeform_conifer_30_60_test_summary, lifeform_conifer_60_90_test_summary, lifeform_conifer_90_test_summary,
+  lifeform_oaks_60_90_test_summary, lifeform_oaks_30_60_test_summary, lifeform_oaks_10_30_test_summary, lifeform_oaks_90_test_summary,
+  shade2_stfi_10_30_test_summary,shade2_stfi_30_60_test_summary, shade2_stfi_60_90_test_summary, shade2_stfi_90_test_summary, 
+  shade2_sift_10_30_test_summary, shade2_sift_30_60_test_summary, shade2_sift_60_90_test_summary, shade2_sift_90_test_summary,   anf_10_30_test_summary, anf_30_60_test_summary, anf_60_90_test_summary, anf_90_test_summary,  
+  lpnf_10_30_test_summary,lpnf_30_60_test_summary, lpnf_60_90_test_summary, lpnf_90_test_summary,  
+  sbnf_10_30_test_summary, sbnf_30_60_test_summary, sbnf_60_90_test_summary, sbnf_90_test_summary, 
+  elev1_10_30_test_summary, elev1_30_60_test_summary, elev1_60_90_test_summary, elev1_90_test_summary, 
+  elev2_10_30_test_summary, elev2_30_60_test_summary, elev2_60_90_test_summary, elev2_90_test_summary, 
+  elev3_10_30_test_summary, elev3_30_60_test_summary, elev3_60_90_test_summary, elev3_90_test_summary, 
+  elev4_10_30_test_summary, elev4_30_60_test_summary, elev4_60_90_test_summary, elev4_90_test_summary,
+  elev1o_10_30_test_summary, elev1o_30_60_test_summary, elev2o_10_30_test_summary,elev2o_30_60_test_summary, elev2o_60_90_test_summary, elev3o_10_30_test_summary,
+  elev1c_10_30_test_summary, elev1c_30_60_test_summary, elev1c_60_90_test_summary, elev1c_90_test_summary, 
+  elev2c_10_30_test_summary, elev2c_30_60_test_summary, elev2c_60_90_test_summary, elev2c_90_test_summary, 
+  elev3c_10_30_test_summary, elev3c_30_60_test_summary, elev3c_60_90_test_summary, elev3c_90_test_summary, 
+  elev4c_10_30_test_summary, elev4c_30_60_test_summary, elev4c_60_90_test_summary)
+
+# tidy results
+tree_density_stats_summary_tidy <- tree_density_stats_summary %>% 
+  rename(mean_diff = estimate,
+         fia_mean = estimate1,
+         vtm_mean = estimate2, 
+         t_statistic = statistic,
+         df = parameter) %>% 
+  mutate(stats = names) %>% 
+  mutate(significant_difference = case_when(
+    p.value <= 0.05 ~ "Yes",
+    p.value > 0.05 ~ "No"
+  )) 
+
+  
+################################### combine cohen's D results ################################## 
+effectsize_bind <- cbind(
+  total_effsize_10_30_df, total_effsize_30_60_df, total_effsize_60_90_df, total_effsize_90_df,
+  lifeform_conifer_10_30_effectsize_df, lifeform_conifer_30_60_effectsize_df, lifeform_conifer_60_90_effectsize_df, lifeform_conifer_90_effectsize_df,
+  lifeform_oaks_10_30_effectsize_df, lifeform_oaks_30_60_effectsize_df, lifeform_oaks_60_90_effectsize_df, lifeform_oaks_90_effectsize_df,
+  shade2_stfi_10_30_effectsize_df, shade2_stfi_30_60_effectsize_df, shade2_stfi_60_90_effectsize_df, shade2_stfi_90_effectsize_df, 
+  shade2_sift_10_30_effectsize_df, shade2_sift_30_60_effectsize_df, shade2_sift_60_90_effectsize_df, shade2_sift_90_effectsize_df, 
+  anf_10_30_effectsize_df, anf_30_60_effectsize_df, anf_60_90_effectsize_df, anf_90_effectsize_df,
+  lpnf_10_30_effectsize_df, lpnf_30_60_effectsize_df, lpnf_60_90_effectsize_df, lpnf_90_effectsize_df, 
+  sbnf_10_30_effectsize_df, sbnf_30_60_effectsize_df, sbnf_60_90_effectsize_df, sbnf_90_effectsize_df, 
+  elev1_10_30_effectsize_df,elev1_30_60_effectsize_df,elev1_60_90_effectsize_df,elev1_90_effectsize_df, 
+  elev2_10_30_effectsize_df,elev2_30_60_effectsize_df,elev2_60_90_effectsize_df,elev2_90_effectsize_df, 
+  elev3_10_30_effectsize_df,elev3_30_60_effectsize_df, elev3_60_90_effectsize_df,elev3_90_effectsize_df,
+  elev4_10_30_effectsize_df, elev4_30_60_effectsize_df, elev4_60_90_effectsize_df, elev4_90_effectsize_df,
+  elev1o_10_30_effectsize_df,elev1o_30_60_effectsize_df,
+  elev2o_10_30_effectsize_df,elev2o_30_60_effectsize_df,elev2o_60_90_effectsize_df,
+  elev3o_10_30_effectsize_df,
+  elev1c_10_30_effectsize_df,elev1c_30_60_effectsize_df,elev1c_60_90_effectsize_df,elev1c_90_effectsize_df, 
+  elev2c_10_30_effectsize_df,elev2c_30_60_effectsize_df,elev2c_60_90_effectsize_df,elev2c_90_effectsize_df, 
+  elev3c_10_30_effectsize_df,elev3c_30_60_effectsize_df, elev3c_60_90_effectsize_df,elev3c_90_effectsize_df,
+  elev4c_10_30_effectsize_df, elev4c_30_60_effectsize_df, elev4c_60_90_effectsize_df)
+
+#tidy results
+effectsize_bind_tidy <- effectsize_bind %>% 
+  pivot_longer(1:69,
+               names_to = 'temp_stats',
+               values_to = 'effect_size_cohens_d') %>% 
+  mutate(stats = names) %>% 
+  dplyr::select(-temp_stats)
+
+################################### combine summarys stats ################################## 
+tree_density_stats_summary_join <- inner_join(tree_density_stats_summary_tidy, effectsize_bind_tidy, by = "stats")
+
+tree_density_stats_summary_all <- tree_density_stats_summary_join %>% 
+  mutate(effect_size_qual = case_when(
+    effect_size_cohens_d <= 0.2 ~ "Negligible",
+    effect_size_cohens_d <= 0.5 ~ "Small",
+    effect_size_cohens_d <= 0.8 ~ "Medium",
+    effect_size_cohens_d > 0.8 ~ "Large"
+  )) %>% 
+  dplyr::select(stats, significant_difference, p.value, effect_size_cohens_d, effect_size_qual, fia_mean, vtm_mean, mean_diff, df, t_statistic, method, conf.low, conf.high) 
+
+#write.csv(tree_density_stats_summary_all, "tree_size_class_stats_summary_all.csv")
+
+
+################################## Kable of Stats ############################
+
+tree_density_stats_summary_all %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = "striped", 
+                full_width = F,
+                position = "left") 
+
+
+```
+
+
+### Bootstrapped Species Stats
+```{r}
+################################## list of name of unique stats tests ###############################
+
+names2 <- c('Species - ABCO_10.2-30.4', 'Species - ABCO_30.5-60.9','Species - ABCO_61.0-91.3','Species - ABCO_91.4+',
+           "Species - CADE_10.2-30.4", "Species - CADE_30.5-60.9","Species - CADE_61.0-91.3", 'Species - CADE_91.4+',
+           "Species - PICO_10.2-30.4","Species - PICO_30.5-60.9", "Species - PICO_61.0-91.3",
+           "Species - PILA_10.2-30.4","Species - PILA_30.5-60.9", "Species - PILA_61.0-91.3","Species - PILA_91.4+",
+           "Species - Psma_30.5-60.9", "Species - PSMA_61.0-91.3",
+           "Species - Yellow Pine_10.2-30.4","Species - Yellow Pine_30.5-60.9","Species - Yellow Pine_61.0-91.3","Species - Yellow Pine_91.4+", 
+           "Species - QUCH_10.2-30.4","Species - QUCH_30.5-60.9",
+           "Species - QUKE_10.2-30.4","Species - QUKE_30.5-60.9","Species - QUKE_61.0-91.3")
+
+################################### Combine boot t-test results ################################## 
+boot_bind <- rbind(species_abco_10_30_test_summary,species_abco_30_60_test_summary, species_abco_60_90_test_summary, species_abco_90_test_summary, 
+  species_cade_10_30_test_summary,species_cade_30_60_test_summary, species_cade_60_90_test_summary, species_cade_90_test_summary,
+  species_pico_10_30_test_summary, species_pico_30_60_test_summary, species_pico_60_90_test_summary, 
+  species_pila_10_30_test_summary, species_pila_30_60_test_summary, species_pila_60_90_test_summary, species_pila_90_test_summary, 
+  species_psma_30_60_test_summary, species_psma_60_90_test_summary, 
+  species_yellow_pine_10_30_test_summary,species_yellow_pine_30_60_test_summary, species_yellow_pine_60_90_test_summary, species_yellow_pine_90_test_summary, 
+  species_quch_10_30_test_summary,species_quch_30_60_test_summary, 
+  species_quke_10_30_test_summary, species_quke_30_60_test_summary, species_quke_60_90_test_summary)  
+
+#tidy results
+species_stats <- boot_bind %>% 
+  rename(fia_mean = estimate1,
+         vtm_mean = estimate2, 
+         t_statistic = statistic,
+         df = parameter) %>% 
+  mutate(stats = names2) %>% 
+  mutate(significant_difference = case_when(
+    p.value <= 0.05 ~ "Yes",
+    p.value > 0.05 ~ "No"
+  )) 
+
+################################### combine cohen's D results ################################## 
+ species_effectsize_bind <- cbind(
+   species_abco_10_30_effectsize_df,species_abco_30_60_effectsize_df, species_abco_60_90_effectsize_df, species_abco_90_effectsize_df, 
+  species_cade_10_30_effectsize_df, species_cade_30_60_effectsize_df, species_cade_60_90_effectsize_df, species_cade_90_effectsize_df,
+  species_pico_10_30_effectsize_df, species_pico_30_60_effectsize_df, species_pico_60_90_effectsize_df, 
+  species_pila_10_30_effectsize_df, species_pila_30_60_effectsize_df, species_pila_60_90_effectsize_df, species_pila_90_effectsize_df, 
+  species_psma_30_60_effectsize_df, species_psma_60_90_effectsize_df,
+  species_yellow_pine_10_30_effectsize_df,species_yellow_pine_30_60_effectsize_df, species_yellow_pine_60_90_effectsize_df, species_yellow_pine_90_effectsize_df, 
+  species_quch_10_30_effectsize_df,species_quch_30_60_effectsize_df,  
+  species_quke_10_30_effectsize_df,species_quke_30_60_effectsize_df, species_quke_60_90_effectsize_df)
+
+#tidy results
+effectsize_bind_tidy <- species_effectsize_bind %>% 
+  pivot_longer(1:26,
+               names_to = 'temp_stats',
+               values_to = 'effect_size_cohens_d') %>% 
+  mutate(stats = names2) %>% 
+  dplyr::select(-temp_stats)
+ 
+################################### combine summary stats ################################## 
+species_stats_summary_join <- inner_join(species_stats, effectsize_bind_tidy, by = "stats")
+
+species_stats_summary_join_all <- species_stats_summary_join %>% 
+  mutate(effect_size_qual = case_when(
+    effect_size_cohens_d <= 0.2 ~ "Negligible",
+    effect_size_cohens_d <= 0.5 ~ "Small",
+    effect_size_cohens_d <= 0.8 ~ "Medium",
+    effect_size_cohens_d > 0.8 ~ "Large"
+  )) %>% 
+  dplyr::select(stats, significant_difference, p.value, effect_size_cohens_d, effect_size_qual, fia_mean, vtm_mean, df, t_statistic, method, conf.low, conf.high) 
+
+#write.csv(species_stats_summary_join_all, "species_boot_stats_summary_join_all.csv")
+
+
+################################## Kable of Stats ############################
+
+species_stats_summary_join_all %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = "striped", 
+                full_width = F,
+                position = "left") 
+
+```
+
+
+### Negative Binomial 
+
+remove species and anf_90
+```{r}
+
+names1 <- c('All plots_10.2-30.4','All plots_30.5-60.9', 'All plots_61.0-91.3', 'All plots_91.4+',
+           "Lifeform - Conifers_10.2-30.4", "Lifeform - Conifers_30.5-60.9", "Lifeform - Conifers_61.0-91.3", "Lifeform - Conifers_91.4+",
+           "Lifeform - Oaks_10.2-30.4", "Lifeform - Oaks_30.5-60.9", "Lifeform - Oaks_61.0-91.3", "Lifeform - Oaks_91.4+", "STFI_10.2-30.4","STFI_30.5-60.9","STFI_61.0-91.3","STFI_91.4+",
+           "SIFT_10.2-30.4", "SIFT_30.5-60.9", "SIFT_61.0-91.3", "SIFT_91.4+",
+           "ANF_10.2-30.4","ANF_30.5-60.9","ANF_61.0-91.3",
+           "LPNF_10.2-30.4","LPNF_30.5-60.9","LPNF_61.0-91.3","LPNF_91.4+",
+           "SBNF_10.2-30.4","SBNF_30.5-60.9","SBNF_61.0-91.3","SBNF_91.4+",
+           "Elevation - 1000-1500_10.2-30.4","Elevation - 1000-1500_30.5-60.9","Elevation - 1000-1500_61.0-91.3","Elevation - 1000-1500_91.4+",
+           "Elevation - 1500-2000_10.2-30.4","Elevation - 1500-2000_30.5-60.9","Elevation - 1500-2000_61.0-91.3","Elevation - 1500-2000_91.4+",
+           "Elevation - 2000-2500_10.2-30.4", "Elevation - 2000-2500_30.5-60.9", "Elevation - 2000-2500_61.0-91.3", "Elevation - 2000-2500_91.4+",
+           "Elevation - 2500+_10.2-30.4","Elevation - 2500+_30.5-60.9","Elevation - 2500+_61.0-91.3","Elevation - 2500+_91.4+", "Elevation Oaks - 1000-1500_10.2-30.4","Elevation Oaks - 1000-1500_30.5-60.9",
+           "Elevation Oaks - 1500-2000_10.2-30.4","Elevation Oaks - 1500-2000_30.5-60.9","Elevation Oaks - 1500-2000_61.0-91.3",
+           "Elevation Oaks- 2000-2500_10.2-30.4", "Elevation Conifers - 1000-1500_10.2-30.4","Elevation Conifers - 1000-1500_30.5-60.9","Elevation Conifers - 1000-1500_61.0-91.3","Elevation Conifers - 1000-1500_91.4+",
+           "Elevation Conifers - 1500-2000_10.2-30.4","Elevation Conifers  - 1500-2000_30.5-60.9","Elevation Conifers - 1500-2000_61.0-91.3","Elevation Conifers - 1500-2000_91.4+",
+           "Elevation Conifers - 2000-2500_10.2-30.4", "Elevation Conifers - 2000-2500_30.5-60.9", "Elevation Conifers - 2000-2500_61.0-91.3", "Elevation Conifers - 2000-2500_91.4+",
+           "Elevation Conifers - 2500+_10.2-30.4","Elevation Conifers - 2500+_30.5-60.9","Elevation Conifers - 2500+_61.0-91.3")
+################################### Combine t-test results ################################## 
+tree_size_stats_nb_summary <- rbind(total_nb_10_30_summary, total_nb_30_60_summary, total_nb_60_90_summary, total_nb_90_summary, conifer_nb_10_30_summary, conifer_nb_30_60_summary, conifer_nb_60_90_summary, conifer_nb_90_summary, oak_nb_10_30_summary, oak_nb_30_60_summary, oak_nb_60_90_summary, oak_nb_90_summary, stfi_nb_10_30_summary, stfi_nb_30_60_summary, stfi_nb_60_90_summary, stfi_nb_90_summary, sift_nb_10_30_summary, sift_nb_30_60_summary, sift_nb_60_90_summary, sift_nb_90_summary, anf_nb_10_30_summary, anf_nb_30_60_summary, anf_nb_60_90_summary, lpnf_nb_10_30_summary, lpnf_nb_30_60_summary, lpnf_nb_60_90_summary, lpnf_nb_90_summary, sbnf_nb_10_30_summary, sbnf_nb_30_60_summary, sbnf_nb_60_90_summary, sbnf_nb_90_summary, elev1_nb_10_30_summary, elev1_nb_30_60_summary, elev1_nb_60_90_summary, elev1_nb_90_summary, elev2_nb_10_30_summary, elev2_nb_30_60_summary, elev2_nb_60_90_summary, elev2_nb_90_summary, elev3_nb_10_30_summary, elev3_nb_30_60_summary, elev3_nb_60_90_summary, elev3_nb_90_summary, elev4_nb_10_30_summary, elev4_nb_30_60_summary, elev4_nb_60_90_summary, elev4_nb_90_summary, elev1o_nb_10_30_summary, elev1o_nb_30_60_summary, elev2o_nb_10_30_summary, elev2o_nb_30_60_summary, elev2o_nb_60_90_summary, elev3o_nb_10_30_summary, elev1c_nb_10_30_summary, elev1c_nb_30_60_summary, elev1c_nb_60_90_summary, elev1c_nb_90_summary, elev2c_nb_10_30_summary, elev2c_nb_30_60_summary, elev2c_nb_60_90_summary, elev2c_nb_90_summary, elev3c_nb_10_30_summary, elev3c_nb_30_60_summary, elev3c_nb_60_90_summary, elev3c_nb_90_summary, elev4c_nb_10_30_summary, elev4c_nb_30_60_summary, elev4c_nb_60_90_summary) 
+                                     
+                                     
+#abco_nb_summary, cade_nb_summary, pico_nb_summary, pila_nb_summary, yp_nb_summary, quch_nb_summary, quke_nb_summary, stfi_nb_summary, sift_nb_summary, anf_nb_summary, lpnf_nb_summary, sbnf_nb_summary, elev1_nb_summary, elev2_nb_summary, elev3_nb_summary, elev4_nb_summary)
+
+tree_size_stats_nb_summary_tidy <- tree_size_stats_nb_summary %>%
+  filter(term == "time_frameVTM") %>%
+  rename(z_statistic = statistic) %>%
+  mutate(stats = names1) %>%
+  mutate(significant_difference = case_when(
+    p.value <= 0.05 ~ "Yes",
+    p.value > 0.05 ~ "No"
+  )) %>%
+  dplyr::select(stats, p.value, significant_difference, std.error, z_statistic)
+
+#write.csv(tree_size_stats_nb_summary_tidy, 'tree_size_stats_nb_summary_tidy.csv')
+################################## Kable of Stats ############################
+
+tree_size_stats_nb_summary_tidy %>%
+  kable() %>%
+  kable_styling(bootstrap_options = "striped",
+                full_width = F,
+                position = "left")
+
+```
+
+only cade has different significance levels when using the welch t test vs the negative binomial. the welch t test says CADE is not significantly different and te negative binomial says it is. CADE had the second most over dispersed count data (mean =  8, variance = 451). The p value for welch t test was 0.1 so it wasnt too far off from significance. Have to ask Bruce about this. 
+
+
+

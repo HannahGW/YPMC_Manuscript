@@ -1,0 +1,1423 @@
+---
+title: "Tree Density Stats"
+author: "AMP"
+date: "12/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=F, warning=F)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(janitor)
+library(effsize)
+library(MASS)
+library(broom)
+library(kableExtra)
+library(here)
+```
+
+# Data
+```{r, message=F, warning=F}
+fia <- read.csv(here("/FIA Data/Final FIA data and code used for analysis/final_binded_fia_ypmc_data.csv")) 
+vtm <- read_csv(here("/vtm_data/vtm_dataset_750m_buffer_FINAL.csv")) 
+
+```
+
+# Tidy Data
+```{r, warning=F, message=F}
+###################################### vtm data ######################################
+vtm_tidy <- vtm %>% 
+  pivot_longer('dbh_4_11':'dbh_36',
+               names_to = "dbh_class",
+               values_to = "dbh_count") %>% 
+  filter(dbh_count != 0) %>% # get error when use uncount() and there are rows with a value of 0
+  tidyr::uncount(dbh_count) %>% 
+  # mutate(dbh_class = case_when(
+  #   dbh_class == "dbh_4_11" ~ "10.2–30.4",
+  #   dbh_class == "dbh_12_23" ~ "30.5–60.9",
+  #   dbh_class == "dbh_24_35" ~ "61.0–91.3",
+  #   dbh_class == "dbh_36" ~ "91.4+"
+  # )) %>% 
+  # mutate(dbh_class = as.factor(dbh_class),
+  #        dbh_class = fct_relevel(dbh_class, levels=c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")))  %>% 
+  dplyr::select(-genus, -species) %>% 
+  dplyr::rename(species = abbreviation) %>% 
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine"),
+         species = str_replace(species, pattern = "PICO3", "PICO")) %>% # change pico3 to pico 
+  mutate(species = fct_relevel(species, levels =c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE"))) %>% 
+  mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(elev_m = elevation/3.281) %>% 
+  mutate(elevation_class = case_when(
+    elev_m < 500 ~ "0-500",
+    elev_m <= 1000 ~ "500-1,000",
+    elev_m <= 1500 ~ "1,000-1,500",
+    elev_m <= 2000 ~ "1,500-2,000",
+    elev_m <= 2500 ~ "2,000-2,500",
+    elev_m >= 2500 ~ "2,500+"
+  )) %>% 
+  mutate(elevation_class = as.factor(elevation_class),
+         elevation_class = fct_relevel(elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+"))) 
+
+########################################## FIA ########################################### 
+fia_tidy <- fia %>% 
+  filter(!is.na(dbh)) %>% 
+  mutate(dbh_class = case_when(
+    dbh < 10.2 ~ "0–10.2",
+    dbh <= 30.4 ~ "10.2–30.4",
+    dbh <= 60.9 ~ "30.5–60.9",
+    dbh < 91.44 ~ "61.0–91.3",
+    dbh >= 91.44 ~ "91.4+"
+  )) %>%
+  filter(dbh_class != "0–10.2") %>%
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine")) %>% 
+  mutate(wilderness = case_when(
+    reserved %in% c("Y", "Reserved/Wilderness") ~ "Y",
+    reserved %in% c("N", "Not Reserved/Wilderness") ~ "N")) %>% 
+ mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(elevation_class = case_when(elev <= 1500 ~ "1,000-1,500",
+                                     elev <= 2000 ~ "1,500-2,000",
+                                     elev <= 2500 ~ "2,000-2,500",
+                                     elev >= 2500 ~ "2,500+")) %>% 
+  mutate(slope_decimal = slope/100,
+         slope_corrected_area = 672.45*cos(atan(slope_decimal)))
+
+# fct_relevel wouldn't work properly in mutate() for these two variables in fia data
+# fia_tidy$dbh_class <- factor(fia_tidy$dbh_class, levels = c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")) 
+fia_tidy$species <- factor(fia_tidy$species, levels= c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE")) 
+fia_tidy$elevation_class <- factor(fia_tidy$elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+"))
+
+
+#################################### slope corrected area ##################################
+vtm_slope <- vtm_tidy %>%
+  mutate(slope_decimal = slope_percent/100,
+         slope_corrected_area = 809*cos(atan(slope_decimal))) %>% 
+  dplyr::select(plotkey, slope_corrected_area) %>% 
+  distinct(.keep_all=T) %>%  # remove duplicates
+  mutate(slope_corrected_area = replace_na(slope_corrected_area, 809)) #%>%
+  # mutate(slope_corrected_area = as.numeric(slope_corrected_area)) %>% 
+  # mutate(slope_corrected_area = slope_corrected_area/10000) %>% 
+  # arrange(plotkey)
+
+# write.csv(vtm_slope, 'vtm_slope_test.csv', row.names = F)
+# 
+
+fia_slope <- fia_tidy %>%
+  group_by(join_plot) %>% 
+  mutate(slope_avg = mean(slope)) %>% # some plots had different slopes recorded***
+  mutate(slope_decimal = slope_avg/100,
+         slope_corrected_area = 672.45*cos(atan(slope_decimal)))%>% 
+  dplyr::select(join_plot, slope_corrected_area) %>% 
+  distinct(.keep_all=T) %>% 
+  dplyr::rename(plotkey=join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  ungroup()
+
+all_slope_corrected <- rbind(vtm_slope, fia_slope)
+
+```
+
+plots with no slope were given a default slope of 0 so plo area = 809(only in VTm; n = 6 plots)
+some fia plots (n=13) had more than one slope recorded. the average slope was used for these plots
+
+# Stem Density
+
+## Total 
+```{r, include=FALSE}
+##################################### set up data ##################################### 
+vtm_total <- vtm_tidy %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "VTM")
+
+fia_total <- fia_tidy %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") 
+
+total <- rbind(vtm_total, fia_total) 
+
+######################################### sample size ##########################################
+vtm_total_n <- nrow(vtm_total)
+fia_total_n <- nrow(fia_total)
+##################################### Check assumptions ############################################
+## assumptions from allisons esm 206 lecture 11
+
+# 1. Continuous observations are randomly drawn from populations --> yes
+
+# 2. data is normally distributed --> sure
+ggplot(vtm_total, aes(x=stem_density)) + geom_histogram() # right skewed
+ggplot(fia_total, aes(x=stem_density)) + geom_histogram() +
+  scale_x_continuous()# slightly right skewed
+ggplot(total, aes(x=stem_density, fill = time_frame)) +geom_histogram()
+
+ggplot(vtm_total, aes(sample=stem_density)) + geom_qq() # points kinda curved
+ggplot(fia_total, aes(sample=stem_density)) + geom_qq() # linear enough?
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+# 3. Equal Variances -> do NOT need to worry about this when using the welch t test (which IS parametric)
+
+# 4. Independent samples and observations --> yes
+
+
+##################################### welchs 2 sample ONE-SIDED t-test ########################### 
+
+total_test <- t.test(fia_total$stem_density, vtm_total$stem_density, paired = F)
+
+total_test$p.value
+total_test$statistic # t statistic
+total_test$parameter # df
+
+total_test_summary <- broom::tidy(total_test)
+
+total_effsize <- effsize::cohen.d(fia_total$stem_density, vtm_total$stem_density)
+total_effsize_df <- as.data.frame(total_effsize$estimate) 
+
+######################################## negative binomial #######################################
+
+totals <- vtm_total %>% summarise(mean = mean(as.numeric(n)),
+                              var = var(as.numeric(n)))
+# compare mean adn variance
+# mean(vtm_total$as.numeric(n)) # 21.5
+# var(vtm_total$as.numeric(n)) # 264.8 which is FAAAAR greater than the mean. So data IS overdispersed
+
+#total_slope <- inner_join(total, all_slope_corrected, by = "plotkey")
+
+# model 
+total_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = total) 
+summary(total_nb)
+total_nb_summary <- broom::tidy(total_nb)
+
+```
+
+## species
+
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_species <- vtm_tidy %>% 
+  group_by(plotkey, species) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = species,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_species <- fia_tidy %>% 
+  group_by(join_plot, species) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  dplyr::select(-n) %>%
+  pivot_wider(names_from = species,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) 
+
+species <- dplyr::bind_rows(vtm_species, fia_species) 
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(species, aes(x=abco, fill = time_frame)) +geom_histogram() # skewed
+ggplot(species, aes(x=cade, fill = time_frame)) +geom_histogram() # skewed
+ggplot(species, aes(x=pico, fill = time_frame)) +geom_histogram() # skewed
+ggplot(species, aes(x=pila, fill = time_frame)) +geom_histogram() # skewed
+ggplot(species, aes(x=yellow_pine, fill = time_frame)) +geom_histogram() # skewed
+ggplot(species, aes(x=quch, fill = time_frame)) +geom_histogram() # skewed
+ggplot(species, aes(x=quke, fill = time_frame)) +geom_histogram() # skewed
+
+
+#ggplot(df, aes(sample=stem_density)) + geom_qq() # points kinda curved
+#ggplot(df, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+############## ABCO ############
+species_abco_test <- t.test(fia_species$abco, vtm_species$abco, paired = F)
+
+# test summary
+species_abco_test
+species_abco_test_summary <- broom::tidy(species_abco_test)
+
+#cohen's d
+species_abco_effectsize <- effsize::cohen.d(fia_species$abco, vtm_species$abco)
+species_abco_effectsize_df <- as.data.frame(species_abco_effectsize$estimate) 
+
+########### CADE ##############
+species_cade_test <- t.test(fia_species$cade, vtm_species$cade, paired = F )
+
+# test summary
+species_cade_test
+species_cade_test_summary <- broom::tidy(species_cade_test)
+
+#cohen's d
+species_cade_effectsize <- effsize::cohen.d(fia_species$cade, vtm_species$cade)
+species_cade_effectsize_df <- as.data.frame(species_cade_effectsize$estimate) 
+
+########### PICO ##############
+species_pico_test <- t.test(fia_species$pico, vtm_species$pico, paired = F )
+
+# test summary
+species_pico_test
+species_pico_test_summary <- broom::tidy(species_pico_test)
+
+#cohen's d
+species_pico_effectsize <- effsize::cohen.d(fia_species$pico, vtm_species$pico)
+species_pico_effectsize_df <- as.data.frame(species_pico_effectsize$estimate) 
+
+########### PILA ##############
+species_pila_test <- t.test(fia_species$pila, vtm_species$pila, paired = F )
+
+# test summary
+species_pila_test
+species_pila_test_summary <- broom::tidy(species_pila_test)
+
+#cohen's d
+species_pila_effectsize <- effsize::cohen.d(fia_species$pila, vtm_species$pila)
+species_pila_effectsize_df <- as.data.frame(species_pila_effectsize$estimate) 
+
+########### PSMA ##############
+species_psma_test <- t.test(fia_species$psma, vtm_species$psma, paired = F )
+
+# test summary
+species_psma_test
+species_psma_test_summary <- broom::tidy(species_psma_test)
+
+#cohen's d
+species_psma_effectsize <- effsize::cohen.d(fia_species$psma, vtm_species$psma)
+species_psma_effectsize_df <- as.data.frame(species_psma_effectsize$estimate) 
+
+########### Yellow Pine ##########
+species_yp_test <- t.test(fia_species$yellow_pine, vtm_species$yellow_pine, paired = F )
+
+# test summary
+species_yp_test
+species_yp_test_summary <- broom::tidy(species_yp_test)
+
+#cohen's d
+species_yp_effectsize <- effsize::cohen.d(fia_species$yellow_pine, vtm_species$yellow_pine)
+species_yp_effectsize_df <- as.data.frame(species_yp_effectsize$estimate) 
+
+########### QUCH ##############
+species_quch_test <- t.test(fia_species$quch, vtm_species$quch, paired = F )
+
+# test summary
+species_quch_test
+species_quch_test_summary <- broom::tidy(species_quch_test)
+
+#cohen's d
+species_quch_effectsize <- effsize::cohen.d(fia_species$quch, vtm_species$quch)
+species_quch_effectsize_df <- as.data.frame(species_quch_effectsize$estimate) 
+
+########### QUKE ##############
+species_quke_test <- t.test(fia_species$quke, vtm_species$quke, paired = F )
+
+# test summary
+species_quke_test
+species_quke_test_summary <- broom::tidy(species_quke_test)
+
+#cohen's d
+species_quke_effectsize <- effsize::cohen.d(fia_species$quke, vtm_species$quke)
+species_quke_effectsize_df <- as.data.frame(species_quke_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+########### sub data
+vtm_species2 <- vtm_tidy %>% 
+  group_by(plotkey, species) %>% 
+  tally() %>% 
+  pivot_wider(names_from = species,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>% 
+  mutate(time_frame = "VTM") 
+
+fia_species2 <- fia_tidy %>% 
+  group_by(join_plot, species) %>% 
+  tally() %>% 
+  pivot_wider(names_from = species,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>% 
+  dplyr::rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(plotkey = as.character(plotkey))
+
+species2 <- dplyr::bind_rows(vtm_species2, fia_species2) 
+species2 <- inner_join(species2, all_slope_corrected, by = "plotkey")
+species2 <- species2 %>% 
+  pivot_longer(2:9,
+               names_to = "species",
+               values_to = 'n')
+
+############ ABCO
+species2_abco <- species2 %>% filter(species == "abco")
+
+# compare mean adn variance
+mean(species2_abco$n) # 4.3
+var(species2_abco$n) # 64.7 data IS overdispersed
+
+# model 
+abco_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_abco) 
+summary(abco_nb)
+
+abco_nb_summary <- broom::tidy(abco_nb)
+
+############ CADE
+species2_cade <- species2 %>% filter(species == "cade")
+
+# compare mean adn variance
+mean(species2_cade$n) # 1.1
+var(species2_cade$n) # 13.2 data IS overdispersed
+
+# model 
+cade_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_cade) 
+summary(cade_nb)
+
+cade_nb_summary <- broom::tidy(cade_nb)
+
+############ PICO
+species2_pico <- species2 %>% filter(species == "pico")
+
+# compare mean adn variance
+mean(species2_pico$n) # 0.67
+var(species2_pico$n) # 5.8 data IS overdispersed
+
+# model 
+pico_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_pico) 
+summary(pico_nb)
+
+pico_nb_summary <- broom::tidy(pico_nb)
+
+############ PILA
+species2_pila <- species2 %>% filter(species == "pila")
+
+# compare mean adn variance
+mean(species2_pila$n) # 1.5
+var(species2_pila$n) # 9.5...idk if the data is overdispersed
+
+# model 
+pila_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_pila) 
+summary(pila_nb)
+
+pila_nb_summary <- broom::tidy(pila_nb)
+
+############ PSMA
+species2_psma <- species2 %>% filter(species == "psma")
+
+# compare mean adn variance
+mean(species2_psma$n) 
+var(species2_psma$n) 
+
+# model 
+psma_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_psma) 
+summary(pila_nb)
+
+psma_nb_summary <- broom::tidy(psma_nb)
+
+############ Yellow Pine
+species2_yp <- species2 %>% filter(species == "yellow_pine")
+
+# compare mean adn variance
+mean(species2_yp$n) # 6.9
+var(species2_yp$n) # 77.5  data is overdispersed?
+
+# model 
+yp_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_yp) 
+summary(yp_nb)
+
+yp_nb_summary <- broom::tidy(yp_nb)
+
+############ QUCH
+species2_quch <- species2 %>% filter(species == "quch")
+
+# compare mean adn variance
+mean(species2_quch$n) # 4.6
+var(species2_quch$n) # 132  data is overdispersed
+
+# model 
+quch_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_quch) 
+summary(quch_nb)
+
+quch_nb_summary <- broom::tidy(quch_nb)
+
+############ QUKE
+species2_quke <- species2 %>% filter(species == "quke")
+
+# compare mean adn variance
+mean(species2_quke$n) # 1.9
+var(species2_quke$n) # 26.1  data is overdispersed?
+
+# model 
+quke_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = species2_quke) 
+summary(quke_nb)
+
+quke_nb_summary <- broom::tidy(quke_nb)
+
+
+```
+
+
+
+
+## Shade/Fire Tolerance2
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_shade2 <- vtm_tidy %>% 
+group_by(plotkey, shade_tolerance2) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+
+fia_shade2 <- fia_tidy %>% 
+  group_by(join_plot, shade_tolerance2) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) 
+
+shade2 <- dplyr::bind_rows(vtm_shade2, fia_shade2) 
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(shade2, aes(x=shade_tolerant_fire_intolerant, fill = time_frame)) +geom_histogram() # skewed
+ggplot(shade2, aes(x=shade_intolerant_fire_tolerant, fill = time_frame)) +geom_histogram() # skewed
+
+
+#ggplot(vtm_shade2_stfi, aes(sample=stem_density)) + geom_qq() # points kinda curved
+#ggplot(fia_shade2_stfi, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+########## STFI ########
+shade2_stfi_test <- t.test(fia_shade2$shade_tolerant_fire_intolerant, vtm_shade2$shade_tolerant_fire_intolerant, paired = F )
+
+# test summary
+shade2_stfi_test
+shade2_stfi_test_summary <- broom::tidy(shade2_stfi_test)
+
+#cohen's d
+stfi_effectsize <- effsize::cohen.d(fia_shade2$shade_tolerant_fire_intolerant, vtm_shade2$shade_tolerant_fire_intolerant)
+stfi_effectsize_df <- as.data.frame(stfi_effectsize$estimate) 
+
+###### SIFT ######
+shade2_sift_test <- t.test(fia_shade2$shade_intolerant_fire_tolerant, vtm_shade2$shade_intolerant_fire_tolerant, paired = F )
+
+# test summary
+shade2_sift_test
+shade2_sift_test_summary <- broom::tidy(shade2_sift_test)
+
+#cohen's d
+sift_effectsize <- effsize::cohen.d(fia_shade2$shade_intolerant_fire_tolerant, vtm_shade2$shade_intolerant_fire_tolerant)
+sift_effectsize_df <- as.data.frame(sift_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+########### sub data
+vtm_shade2 <- vtm_tidy %>% 
+group_by(plotkey, shade_tolerance2) %>% 
+  tally() %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  mutate(time_frame = "VTM") %>% 
+  mutate(area = 809)
+
+fia_shade2 <- fia_tidy %>% 
+  group_by(join_plot, shade_tolerance2) %>% 
+  tally() %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  dplyr::select(-join_plot) %>% 
+  dplyr::rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(plotkey = as.character(plotkey))
+
+shade2 <- dplyr::bind_rows(vtm_shade2, fia_shade2) 
+shade2 <- inner_join(shade2, all_slope_corrected, by ="plotkey")
+
+############ STFI
+shade2_stfi <- shade2 %>% dplyr::select(shade_tolerant_fire_intolerant, time_frame, slope_corrected_area)
+
+# compare mean adn variance
+mean(shade2_stfi$shade_tolerant_fire_intolerant) # 10
+var(shade2_stfi$shade_tolerant_fire_intolerant) # 193 data IS overdispersed
+
+# model 
+stfi_nb <- glm.nb(shade_tolerant_fire_intolerant ~ time_frame + offset(log(slope_corrected_area)), data = shade2_stfi) 
+summary(stfi_nb)
+
+stfi_nb_summary <- broom::tidy(stfi_nb)
+
+############ STFI
+shade2_sift <- shade2 %>% dplyr::select(shade_intolerant_fire_tolerant, time_frame, slope_corrected_area)
+
+# compare mean adn variance
+mean(shade2_sift$shade_intolerant_fire_tolerant) # 11
+var(shade2_sift$shade_intolerant_fire_tolerant) # 95 data is overdispersed?
+
+# model 
+sift_nb <- glm.nb(shade_intolerant_fire_tolerant ~ time_frame + offset(log(slope_corrected_area)), data = shade2_sift) 
+summary(sift_nb)
+
+sift_nb_summary <- broom::tidy(sift_nb)
+
+```
+
+
+## National Forest
+
+### ANF
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_anf <- vtm_tidy %>% 
+  filter(national_forest_name == "anf") %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  ungroup() %>% 
+  mutate(time_frame = "VTM") 
+
+fia_anf <- fia_tidy %>% 
+  filter(admin_forest == "ANF") %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  ungroup()
+
+anf <- dplyr::bind_rows(vtm_anf, fia_anf) 
+#anf <- inner_join(anf, all_slope_corrected, by = "plotkey")
+
+
+##################################### Check assumptions #####################################
+
+# data is normally distributed --> sure
+ggplot(anf, aes(x=stem_density)) +geom_histogram() # skewed
+
+#ggplot(vtm_anf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+#ggplot(fia_anf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+anf_test <- t.test(fia_anf$stem_density, vtm_anf$stem_density, paired = F )
+
+# test summary
+anf_test
+anf_test_summary <- broom::tidy(anf_test)
+
+#cohen's d
+anf_effectsize <- effsize::cohen.d(fia_anf$stem_density, vtm_anf$stem_density)
+anf_effectsize_df <- as.data.frame(anf_effectsize$estimate) 
+
+
+######################################## negative binomial #######################################
+
+# compare mean adn variance
+mean(anf$n) # 19
+var(anf$n) # 140 data IS overdispersed
+
+# model 
+anf_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = anf) 
+summary(anf_nb)
+
+anf_nb_summary <- broom::tidy(anf_nb)
+
+```
+
+### LPNF
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_lpnf <- vtm_tidy %>% 
+  filter(national_forest_name == "lpnf") %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  ungroup() %>% 
+  mutate(time_frame = "VTM") 
+
+fia_lpnf <- fia_tidy %>% 
+  filter(admin_forest %in% c("LPF", "LPNF")) %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  ungroup()
+
+lpnf <- dplyr::bind_rows(vtm_lpnf, fia_lpnf) 
+#lpnf <- inner_join(lpnf, all_slope_corrected, by = "plotkey")
+
+
+######################################### sample size ##########################################
+
+vtm_lpnf_n <- nrow(vtm_lpnf)
+fia_lpnf_n <- nrow(fia_lpnf)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(lpnf, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+
+ggplot(vtm_lpnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+ggplot(fia_lpnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+lpnf_test <- t.test(fia_lpnf$stem_density, vtm_lpnf$stem_density, paired = F )
+
+# test summary
+lpnf_test
+lpnf_test_summary <- broom::tidy(lpnf_test)
+
+#cohen's d
+lpnf_effectsize <- effsize::cohen.d(fia_lpnf$stem_density, vtm_lpnf$stem_density)
+lpnf_effectsize_df <- as.data.frame(lpnf_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+# compare mean adn variance
+mean(lpnf$n) # 18
+var(lpnf$n) # 120 data IS overdispersed
+
+# model 
+lpnf_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = lpnf) 
+summary(anf_nb)
+
+lpnf_nb_summary <- broom::tidy(lpnf_nb)
+```
+
+### SBNF
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_sbnf <- vtm_tidy %>% 
+  filter(national_forest_name == "sbnf") %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  ungroup() %>% 
+  mutate(time_frame = "VTM") 
+
+fia_sbnf <- fia_tidy %>% 
+  filter(admin_forest %in% c ("SBNF", "BDF")) %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  ungroup()
+
+sbnf <- dplyr::bind_rows(vtm_sbnf, fia_sbnf) 
+#sbnf <- inner_join(sbnf, all_slope_corrected, by = "plotkey")
+
+
+
+######################################### sample size ##########################################
+
+vtm_sbnf_n <- nrow(vtm_sbnf)
+fia_sbnf_n <- nrow(fia_sbnf)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(sbnf, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+
+ggplot(vtm_sbnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+ggplot(fia_sbnf, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+sbnf_test <- t.test(fia_sbnf$stem_density, vtm_sbnf$stem_density, paired = F )
+
+# test summary
+sbnf_test
+sbnf_test_summary <- broom::tidy(sbnf_test)
+
+#cohen's d
+sbnf_effectsize <- effsize::cohen.d(fia_sbnf$stem_density, vtm_sbnf$stem_density)
+sbnf_effectsize_df <- as.data.frame(sbnf_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+# compare mean adn variance
+mean(sbnf$n) # 20
+var(sbnf$n) # 299 data IS overdispersed
+
+# model 
+sbnf_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = sbnf) 
+summary(sbnf_nb)
+
+sbnf_nb_summary <- broom::tidy(sbnf_nb)
+
+```
+
+## Elevation
+
+### 1,000-1,499
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev1 <- vtm_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  ungroup() %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev1 <- fia_tidy %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  ungroup()
+
+elev1 <- rbind(vtm_elev1, fia_elev1) 
+#elev1 <- inner_join(elev1, all_slope_corrected, by = "plotkey")
+######################################### sample size ##########################################
+
+vtm_elev1_n <- nrow(vtm_elev1)
+fia_elev1_n <- nrow(fia_elev1)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(elev1, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+
+ggplot(vtm_elev1, aes(sample=stem_density)) + geom_qq() # points kinda curved
+ggplot(fia_elev1, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+elev1_test <- t.test(fia_elev1$stem_density, vtm_elev1$stem_density, paired = F )
+
+# test summary
+elev1_test
+elev1_test_summary <- broom::tidy(elev1_test)
+
+#cohen's d
+elev1_effectsize <- effsize::cohen.d(fia_elev1$stem_density, vtm_elev1$stem_density)
+elev1_effectsize_df <- as.data.frame(elev1_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+# compare mean adn variance
+mean(elev1$n) # 18
+var(elev1$n) # 712 data IS VERY overdispersed
+
+# model 
+elev1_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev1) 
+summary(elev1_nb)
+
+elev1_nb_summary <- broom::tidy(elev1_nb)
+
+```
+
+### 1,500-2,000
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev2 <- vtm_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  ungroup() %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev2 <- fia_tidy %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  ungroup()
+
+elev2 <- rbind(vtm_elev2, fia_elev2) 
+#elev2 <- inner_join(elev2, all_slope_corrected, by = "plotkey")
+
+######################################### sample size ##########################################
+
+vtm_elev2_n <- nrow(vtm_elev2)
+fia_elev2_n <- nrow(fia_elev2)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(elev2, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+
+ggplot(vtm_elev2, aes(sample=stem_density)) + geom_qq() # points kinda curved
+ggplot(fia_elev2, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+elev2_test <- t.test(fia_elev2$stem_density, vtm_elev2$stem_density, paired = F )
+
+# test summary
+elev2_test
+elev2_test_summary <- broom::tidy(elev2_test)
+
+#cohen's d
+elev2_effectsize <- effsize::cohen.d(fia_elev2$stem_density, vtm_elev2$stem_density)
+elev2_effectsize_df <- as.data.frame(elev2_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+# compare mean adn variance
+mean(elev2$n) # 23
+var(elev2$n) # 231 data IS overdispersed
+
+# model 
+elev2_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev2) 
+summary(elev2_nb)
+
+elev2_nb_summary <- broom::tidy(elev2_nb)
+
+```
+
+### 2,000-2,499
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev3 <- vtm_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  ungroup() %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev3 <- fia_tidy %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  ungroup()
+
+
+elev3 <- rbind(vtm_elev3, fia_elev3) 
+#elev3 <- inner_join(elev3, all_slope_corrected, by = "plotkey")
+
+######################################### sample size ##########################################
+
+vtm_elev3_n <- nrow(vtm_elev3)
+fia_elev3_n <- nrow(fia_elev3)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(elev3, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+
+ggplot(vtm_elev3, aes(sample=stem_density)) + geom_qq() # points kinda curved
+ggplot(fia_elev3, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+elev3_test <- t.test(fia_elev3$stem_density, vtm_elev3$stem_density, paired = F )
+
+# test summary
+elev3_test
+elev3_test_summary <- broom::tidy(elev3_test)
+
+#cohen's d
+elev3_effectsize <- effsize::cohen.d(fia_elev3$stem_density, vtm_elev3$stem_density)
+elev3_effectsize_df <- as.data.frame(elev3_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+# compare mean adn variance
+mean(elev3$n) # 22
+var(elev3$n) # 315 data IS overdispersed
+
+# model 
+elev3_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev3) 
+summary(elev3_nb)
+
+elev3_nb_summary <- broom::tidy(elev3_nb)
+
+```
+
+### 2,500+
+```{r, include=FALSE}
+
+##################################### set up data ##################################### 
+vtm_elev4 <- vtm_tidy %>% 
+  filter(elevation_class == "2,500+") %>% 
+  group_by(plotkey) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  ungroup() %>% 
+  mutate(time_frame = "VTM") 
+
+fia_elev4 <- fia_tidy %>% 
+  filter(elevation_class == "2,500+") %>% 
+  group_by(join_plot) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  mutate(time_frame = "FIA") %>% 
+  ungroup()
+
+
+elev4 <- rbind(vtm_elev4, fia_elev4) 
+#elev4 <- inner_join(elev4, all_slope_corrected, by = "plotkey")
+
+######################################### sample size ##########################################
+
+vtm_elev4_n <- nrow(vtm_elev4)
+fia_elev4_n <- nrow(fia_elev4)
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(elev4, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+
+ggplot(vtm_elev4, aes(sample=stem_density)) + geom_qq() # points kinda curved
+ggplot(fia_elev4, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+elev4_test <- t.test(fia_elev4$stem_density, vtm_elev4$stem_density, paired = F )
+
+# test summary
+elev4_test
+elev4_test_summary <- broom::tidy(elev4_test)
+
+#cohen's d
+elev4_effectsize <- effsize::cohen.d(fia_elev4$stem_density, vtm_elev4$stem_density)
+elev4_effectsize_df <- as.data.frame(elev4_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+# compare mean adn variance
+mean(elev4$n) # 18
+var(elev4$n) # 228 data IS overdispersed
+
+# model 
+elev4_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = elev4) 
+summary(elev4_nb)
+
+elev4_nb_summary <- broom::tidy(elev4_nb)
+```
+
+## Conifer vs Oaks
+```{r}
+##################################### set up data ##################################### 
+vtm_oaks_conifers <- vtm_tidy %>% 
+  group_by(plotkey, lifeform) %>% 
+  tally() %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(conifers = replace_na(conifers, 0),
+         oaks = replace_na(oaks, 0)) %>% 
+  mutate(time_frame = "VTM")
+
+fia_oaks_conifers <- fia_tidy %>% 
+  group_by(join_plot, lifeform) %>% 
+  tally() %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey)) %>% 
+  inner_join(fia_slope, by = "plotkey") %>% 
+  mutate(stem_density = as.numeric(n)/(slope_corrected_area/10000))  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(conifers = replace_na(conifers, 0),
+         oaks = replace_na(oaks, 0)) %>%  
+  # dplyr::select(-join_plot) %>% 
+  mutate(time_frame = "FIA") 
+
+
+oaks_v_conifers <- dplyr::bind_rows(vtm_oaks_conifers, fia_oaks_conifers) 
+
+##################################### Check assumptions ############################################
+
+# data is normally distributed --> sure
+ggplot(oaks_v_conifers, aes(x=conifers, fill = time_frame)) +geom_histogram() # skewed
+ggplot(oaks_v_conifers, aes(x=oaks, fill = time_frame)) +geom_histogram() # skewed
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+############## OAKS ############
+oaks_test <- t.test(fia_oaks_conifers$oaks, vtm_oaks_conifers$oaks, paired = F )
+
+# test summary
+oaks_test
+oaks_test_summary <- broom::tidy(oaks_test)
+
+#cohen's d
+oaks_effectsize <- effsize::cohen.d(fia_oaks_conifers$oaks, vtm_oaks_conifers$oaks)
+oaks_effectsize_df <- as.data.frame(oaks_effectsize$estimate) 
+
+##################################### welchs 2 sample ONE-SIDED t-test ############################# 
+
+############## CONIFERS ############
+conifers_test <- t.test(fia_oaks_conifers$conifers, vtm_oaks_conifers$conifers, paired = F )
+
+# test summary
+conifers_test
+conifers_test_summary <- broom::tidy(conifers_test)
+
+#cohen's d
+conifers_effectsize <- effsize::cohen.d(fia_oaks_conifers$conifers, vtm_oaks_conifers$conifers)
+conifers_effectsize_df <- as.data.frame(conifers_effectsize$estimate) 
+
+######################################## negative binomial #######################################
+
+########### sub data
+vtm_oaks_conifers <- vtm_tidy %>% 
+  group_by(plotkey, lifeform) %>% 
+  tally() %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(conifers = replace_na(conifers, 0),
+         oaks = replace_na(oaks, 0)) %>% 
+  mutate(time_frame = "VTM")
+
+fia_oaks_conifers <- fia_tidy %>% 
+  group_by(join_plot, lifeform) %>% 
+  tally() %>% 
+  pivot_wider(names_from = lifeform,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(conifers = replace_na(conifers, 0),
+         oaks = replace_na(oaks, 0)) %>%  
+  dplyr::rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA") %>% 
+  mutate(plotkey = as.character(plotkey))
+
+oaks_v_conifers <- dplyr::bind_rows(vtm_oaks_conifers, fia_oaks_conifers)
+oaks_v_conifers <- inner_join(oaks_v_conifers, all_slope_corrected, by = "plotkey")
+oaks_v_conifers_2 <- oaks_v_conifers %>% 
+  pivot_longer(2:3,
+               names_to = "lifeform",
+               values_to = 'n')
+
+############ OAKS
+oaks_2 <- oaks_v_conifers_2 %>% filter(lifeform == "oaks")
+
+# compare mean adn variance
+mean(oaks_2$n) # 6.5
+var(oaks_2$n) # 149 
+
+# model 
+oaks_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = oaks_2) 
+summary(oaks_nb)
+
+oaks_nb_summary <- broom::tidy(oaks_nb)
+
+############ CONIFERS
+conifers_2 <- oaks_v_conifers_2 %>% filter(lifeform == "conifers")
+
+# compare mean adn variance
+mean(conifers_2$n) # 15
+var(conifers_2$n) # 154 
+
+# model 
+conifers_nb <- glm.nb(n ~ time_frame + offset(log(slope_corrected_area)), data = conifers_2) 
+summary(conifers_nb)
+
+conifers_nb_summary <- broom::tidy(conifers_nb)
+
+```
+
+## Elevation and Aspect 
+
+some groups do not have enough samples to do tests
+```{r, include=FALSE}
+##################################### set up data ##################################### 
+# vtm_elev_aspect <- vtm_tidy %>% 
+#   mutate(aspect2 = case_when(
+#     exposure %in% c("N", "NE", "NW") ~ "N",
+#     exposure %in% c("S", "SE", "SW") ~ "S",
+#     TRUE ~ "other"
+#   )) %>% 
+#   filter(aspect2 != "other") %>% 
+#   #filter(elevation_class == "1,000-1,500") %>% 
+#   group_by(plotkey, elevation_class, aspect2) %>% 
+#   tally() %>% 
+#   mutate(stem_density = as.numeric(n)/0.0809)  %>% 
+#   ungroup() %>% 
+#   dplyr::select(-plotkey) %>% 
+#   mutate(time_frame = "VTM") %>% 
+#   mutate(area = 809)
+# 
+# fia_elev1 <- fia_tidy %>% 
+#   mutate(aspect2 = case_when(
+#     aspect_qualitative %in% c("N", "NE", "NW") ~ "N",
+#     aspect_qualitative %in% c("S", "SE", "SW") ~ "S",
+#     TRUE ~ "other"
+#   )) %>% 
+#   filter(aspect2 != "other") %>% 
+#   #filter(elevation_class == "1,000-1,500") %>% 
+#   group_by(join_plot, elevation_class, aspect2) %>% 
+#   tally() %>% 
+#   mutate(stem_density = as.numeric(n)/0.067245) %>% 
+#   ungroup() %>% 
+#   dplyr::select(-join_plot) %>% 
+#   mutate(time_frame = "FIA") %>% 
+#   mutate(area = 672.45)
+# 
+# elev1 <- rbind(vtm_elev1, fia_elev1) 
+# 
+# ######################################### sample size ##########################################
+# 
+# vtm_elev1_n <- vtm_elev_aspect %>% group_by(plotkey, elevation_class, aspect2) %>% count()
+# fia_elev1_n <- nrow(fia_elev1)
+# 
+# ##################################### Check assumptions ############################################
+# 
+# # data is normally distributed --> sure
+# ggplot(elev1, aes(x=stem_density, fill = time_frame)) +geom_histogram() # skewed
+# 
+# ggplot(vtm_elev1, aes(sample=stem_density)) + geom_qq() # points kinda curved
+# ggplot(fia_elev1, aes(sample=stem_density)) + geom_qq() # points kinda curved
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+```
+
+
+
+
+
+
+
+
+## Summary All Stats tests
+
+### Welch T tests
+```{r}
+
+################################## list of name of unique stats tests ###############################
+names <- c('All plots','Species - ABCO', "Species - CADE", "Species - PICO", "Species - PILA", "Species - PSMA", "Species - Yellow Pine", "Species - QUCH", "Species - QUKE", "STFI", "SIFT", "ANF", "LPNF", "SBNF", "Elevation - 1000-1500", "Elevation - 1500-2000", "Elevation - 2000-2500", "Elevation - 2500+", "Family - Oaks", "Family - Conifers")
+
+################################### Combine t-test results ################################## 
+tree_density_stats_summary <- rbind(total_test_summary, species_abco_test_summary, species_cade_test_summary, species_pico_test_summary, species_pila_test_summary, species_psma_test_summary, species_yp_test_summary, species_quch_test_summary, species_quke_test_summary, shade2_stfi_test_summary, shade2_sift_test_summary, anf_test_summary, lpnf_test_summary, sbnf_test_summary, elev1_test_summary, elev2_test_summary, elev3_test_summary, elev4_test_summary, oaks_test_summary, conifers_test_summary)
+
+tree_density_stats_summary_tidy <- tree_density_stats_summary %>% 
+  rename(mean_diff = estimate,
+         fia_mean = estimate1,
+         vtm_mean = estimate2, 
+         t_statistic = statistic,
+         df = parameter) %>% 
+  mutate(stats = names) %>% 
+  mutate(significant_difference = case_when(
+    p.value <= 0.05 ~ "Yes",
+    p.value > 0.05 ~ "No"
+  )) 
+  
+################################### combine cohen's D results ################################## 
+effectsize_bind <- cbind(total_effsize_df, species_abco_effectsize_df, species_cade_effectsize_df, species_pico_effectsize_df, species_pila_effectsize_df, species_psma_effectsize_df, species_yp_effectsize_df, species_quch_effectsize_df, species_quke_effectsize_df, stfi_effectsize_df, sift_effectsize_df, anf_effectsize_df, lpnf_effectsize_df, sbnf_effectsize_df, elev1_effectsize_df, elev2_effectsize_df, elev3_effectsize_df, elev4_effectsize_df, oaks_effectsize_df, conifers_effectsize_df)
+
+effectsize_bind_tidy <- effectsize_bind %>% 
+  pivot_longer(1:20,
+               names_to = 'temp_stats',
+               values_to = 'effect_size_cohens_d') %>% 
+  mutate(stats = names) %>% 
+  dplyr::select(-temp_stats)
+
+################################### combine summarys stats ################################## 
+tree_density_stats_summary_join <- inner_join(tree_density_stats_summary_tidy, effectsize_bind_tidy, by = "stats")
+
+tree_density_stats_summary_all <- tree_density_stats_summary_join %>% 
+  mutate(effect_size_qual = case_when(
+    effect_size_cohens_d <= 0.2 ~ "Negligible",
+    effect_size_cohens_d <= 0.5 ~ "Small",
+    effect_size_cohens_d <= 0.8 ~ "Medium",
+    effect_size_cohens_d > 0.8 ~ "Large"
+  )) %>% 
+  dplyr::select(stats, significant_difference, p.value, effect_size_cohens_d, effect_size_qual, fia_mean, vtm_mean, mean_diff, df, t_statistic, method, conf.low, conf.high) 
+
+
+# save
+#write.csv(tree_density_stats_summary_all, "tree_density_t_test_stats_summary_all.csv")
+
+################################## Kable of Stats ############################
+
+tree_density_stats_summary_all %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = "striped", 
+                full_width = F,
+                position = "left") 
+
+
+```
+
+### Negative Binomial 
+```{r}
+################################### Combine t-test results ################################## 
+tree_density_stats_summary2 <- rbind(total_nb_summary, abco_nb_summary, cade_nb_summary, pico_nb_summary, pila_nb_summary, psma_nb_summary, yp_nb_summary, quch_nb_summary, quke_nb_summary, stfi_nb_summary, sift_nb_summary, anf_nb_summary, lpnf_nb_summary, sbnf_nb_summary, elev1_nb_summary, elev2_nb_summary, elev3_nb_summary, elev4_nb_summary, oaks_nb_summary, conifers_nb_summary)
+
+tree_density_stats_summary_tidy2 <- tree_density_stats_summary2 %>% 
+  filter(term == "time_frameVTM") %>% 
+  rename(z_statistic = statistic) %>% 
+  mutate(stats = names) %>% 
+  mutate(significant_difference = case_when(
+    p.value <= 0.05 ~ "Yes",
+    p.value > 0.05 ~ "No"
+  )) %>% 
+  dplyr::select(stats, p.value, significant_difference, std.error, z_statistic)
+
+# save
+#write.csv(tree_density_stats_summary_tidy2, "tree_density_nb_stats_summary_all.csv")
+
+################################## Kable of Stats ############################
+
+tree_density_stats_summary_tidy2 %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = "striped", 
+                full_width = F,
+                position = "left") 
+ #
+```
+
+only cade has different significance levels when using the welch t test vs the negative binomial. the welch t test says CADE is not significantly different and te negative binomial says it is. CADE had the second most over dispersed count data (mean =  8, variance = 451). The p value for welch t test was 0.1 so it wasnt too far off from significance. Have to ask Bruce about this. 
+
+
+

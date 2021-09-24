@@ -1,0 +1,114 @@
+---
+title: "canopycover_reportcode"
+author: "Hannah Garcia-Wickstrum"
+date: "01/23/2021"
+output: html_document
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+## VTM PIPO 
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+# DBH(subT) = 5 
+
+vtm_pipo <- vtm_data %>%
+  filter(abbreviation == "PIPO") %>%              # select only Pinus ponderosa
+  select(plotkey, abbreviation, n,
+         dbh_4_11, dbh_12_23, dbh_24_35, dbh_36,
+         national_forest_name,
+         elevation, exposure, slope_percent)%>%
+  pivot_longer('dbh_4_11':'dbh_36',
+               names_to = "dbh_class",
+               values_to = "dbh_count") %>%
+  filter(dbh_count !=0) %>%                       # get rid of zeroes
+  uncount(dbh_count) %>%
+  mutate(dbh_class = case_when(
+    dbh_class == "dbh_4_11" ~ "7.5",
+    dbh_class == "dbh_12_23" ~ "17.5",
+    dbh_class == "dbh_24_35" ~ "29.5",
+    dbh_class == "dbh_36" ~ "36"))                # assign midpoint values for each size class
+
+## ---------------------------------------------------------------------------------
+
+# change dbh_class & canopy_cover to numeric
+vtm_pipo$dbh_class <- as.numeric(vtm_pipo$dbh_class)
+
+# calculate canopy width with above equation using species-specific constants from
+# Keyser (2010) table 4.4.2.1
+vtm_pipo <- mutate(vtm_pipo, canopy_width = (pipo_a1 * (dbh_class^(pipo_a2)))) 
+vtm_pipo$canopy_width <- as.numeric(vtm_pipo$canopy_width)
+
+## ---------------------------------------------------------------------------------
+
+# calculate canopy area
+vtm_pipo_canopy <- vtm_pipo %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+# sum canopy cover across all size classes for each plot
+vtm_pipo_sum <- vtm_pipo_canopy %>%
+  group_by(plotkey, dbh_class, abbreviation, national_forest_name) %>%
+  tally(canopy_area)
+```
+
+
+```{r}
+# combine all species dataframes to sum the species per plots
+vtm_total_canopy <- do.call("rbind", list(vtm_pipo_sum,
+                                          vtm_pije_sum,
+                                          vtm_pico_sum,
+                                          vtm_pila_sum,
+                                          vtm_psma_sum,
+                                          vtm_abco_sum,
+                                          vtm_cade_sum,
+                                          vtm_quch_sum,
+                                          vtm_quke_sum)) 
+
+## ---------------------------------------------------------------------------------
+
+# Sum the total canopy cover of all trees from all size classes per plot
+vtm_total_canopy_plot <- vtm_total_canopy %>% 
+  group_by(plotkey, national_forest_name) %>% 
+  tally(n) %>% 
+  rename("total_canopy_area" = "n" ) 
+# n = the area (ft^2) covered by the canopies of all the trees in that size class/species/plot
+
+## ---------------------------------------------------------------------------------
+
+# Conver total_canopy_area from ft^2 to m^2 
+
+# create a column that converts feet squared to meters squared 
+vtm_total_canopy_plot <- vtm_total_canopy_plot %>% 
+  mutate(total_canopy_area_meters = (total_canopy_area *0.092903))
+
+# Divide the total canopy area per plot (m^2) by the size of the plot 
+# Note: A vtm plot is 809 m^2. Then multiply by 100 to obtain a percent canopy cover. 
+vtm_total_canopy_plot <- vtm_total_canopy_plot %>% 
+  mutate(percent_canopy_cover = ((total_canopy_area_meters/809) * 100))
+
+```
+
+
+```{r}
+# Apply Crookston and Stage (1999) equation to account for overlapping canopies
+# C = 100 [1 – exp ( – .01 C′ )]
+# C = percent canopy cover that accounts for overlap,
+# C′ = equation 1-percent canopy cover without accounting for overlap.
+# exp = e^
+
+vtm_total_canopy_plot <- vtm_total_canopy_plot %>% 
+  mutate(percent_canopy_cover_nonoverlap = (100*(1-(e^(-.01*percent_canopy_cover)))))
+```
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,61 @@
+---
+title: "Additional FIA Data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+# Attach packages ----
+
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(kableExtra)
+library(here)
+library(rFIA)
+
+```
+
+```{r Get FIA data}
+
+# getFIA(states = 'CA', dir = here("R", "fia_data_observation", "fia_data_addtnl"), common = TRUE, tables = c('PLOT', 'TREE'), nCores = 1) 
+
+# getFIA(states = 'CA', dir = here("R", "fia_data_observation", "fia_data_addtnl", "contains_all"), common = FALSE, tables = c('PLOT', 'TREE'), nCores = 1) <- couldn't tell how the datasets were different after changing the "common" argument to FALSE
+
+
+# Comment out code after getting FIA data since CSV files are already created
+
+# Troubleshooting tip - removing commits: https://gist.github.com/CrookedNumber/8964442
+# Kept getting "file too large" error when pushing my commits for creating the CSV files
+
+# Troubleshooting tip - how to upload large files to Git (NEED to download Git Large File Storage extension): https://medium.com/@AyunasCode/how-to-push-large-files-to-github-253d05cc6a09
+```
+Metadata: https://www.fia.fs.fed.us/library/database-documentation/
+
+Scroll down to page 2-9 (pg 51 in digital) for plot table variables: https://www.fia.fs.fed.us/library/database-documentation/current/ver80/FIADB%20User%20Guide%20P2_8-0.pdf
+
+```{r Read in CSV files}
+
+# Metadata Info ----
+
+# UNITCD is survey unit code; 5 contains Santa Barbara and Ventura counties, 6 contains SoCal counties. COUNTYCD is county code; code will be in parentheses
+
+# ANF is within LA County (37)
+# CNF is within San Diego (73), Riverside (65), and Orange (59) Counties
+# LPF is within San Luis Obispo (79), Santa Barbara (83), Ventura (111), and Kern (29) Counties
+# BDF is within LA (?), San Bernardino (71), and Riverside (65) Counties
+
+ca_plot_df <- read_csv(here("R", "fia_data_observation", "fia_data_addtnl", "CA_PLOT.csv")) %>% 
+  filter(UNITCD %in% c(4, 5, 6)) %>% 
+  filter(COUNTYCD %in% c(37, 73, 65, 59, 79, 83, 111, 29, 71, 65))
+  
+
+ca_tree_df <- read_csv(here("R", "fia_data_observation", "fia_data_addtnl", "CA_TREE.csv")) %>% 
+  filter(UNITCD %in% c(4, 5, 6)) %>% 
+  filter(COUNTYCD %in% c(37, 73, 65, 59, 79, 83, 111, 29, 71, 65))
+
+```
+

@@ -1,0 +1,3124 @@
+---
+title: "tree_density_landscape_comparison"
+author: "Leana Goetze"
+date: "11/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE)
+```
+
+# attach packages
+```{r}
+library(tidyverse)
+library(dplyr)
+library(here)
+```
+
+### FIA
+
+# read in fia data and wrangle into desired format (fia)
+```{r}
+# read in fiadata 
+fia_data_raw_unfiltered <-read_csv(here::here("FINAL_FIA_DATA", "final_binded_fia_ypmc_data.csv"))
+
+# filter for dbh > 4 inches (10.2 cm)--> use dolnac cutoff per AMP
+fia_data_raw <- fia_data_raw_unfiltered %>% 
+filter(dbh >= 10.2)
+
+# unique(fia_data_raw$unique_plot)
+# 210 total fia plots with trees we're looking at
+```
+
+# total tree density (fia)
+# same as previous analysis
+```{r}
+# wrangle data
+fia_data_species <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species)%>% 
+  group_by(plotkey,species) %>% 
+  tally()
+
+fia_data <- fia_data_species %>% 
+  group_by(plotkey)%>% 
+  tally(n)
+# n = total number of trees (ypmc > 4 inches) in the plot
+##------------------------------------------------------------------------------------
+
+# multiply n by (1/.067245) to convert to trees/hectare instead of trees/.06725 hecare
+fia_density<- fia_data %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245))) %>% 
+  mutate("plot" = "FIA")
+
+# find the average of trees_per_hectare column
+sum(fia_density$tree_per_hectare)/210
+median_fia <- median(fia_density$tree_per_hectare)
+# mean 366.747
+## all plots already included in this dataset!!
+
+fia_total_summary <- fia_density %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare)) 
+fia_total_summary <- fia_total_summary %>% 
+  mutate("median" = median_fia)
+# can also just add in median to one of the values the summary calculates
+##------------------------------------------------------------------------------------
+
+# graph
+l_graph_1 <- ggplot(fia_total_summary , aes(x = plot, y = mean))+
+  geom_col(show.legend = FALSE, fill = "#9A2130", width = 0.2) +
+  geom_text(aes(label = round(mean, 1)), vjust = -0.5)+
+  geom_point(aes(x = plot, y = median)) +
+  theme_bw()+
+  labs(title = "YPMC Tree Density", x = "", y = "Trees/Hectare") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 400))
+```
+
+# tree density by species (fia)
+```{r}
+# check how many plots each species was present in
+fia_species_check <-fia_data_species %>% 
+  group_by(species) %>% 
+  tally()
+ # pipo only in 16 plots --> group with pije and name "yellow pine" (also b/c of errors in vtm tree identification)
+
+##------------------------------------------------------------------------------------
+
+## yellow pine
+# Yellow pine includes Jeffrey and Ponderosa pines
+fia_species_yp<- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species)%>% 
+  group_by(plotkey,species)%>% 
+  tally()%>% 
+  filter(species %in% c("PIPO", "PIJE")) %>% 
+  group_by(plotkey) %>% 
+  tally(n)%>% ## this extra code is needed here, because there are two species and therefore the plotkey could be duplicated
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_yp$tree_per_hectare)/210
+# mean = 98.71508
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_yellowpine_present <- fia_species_yp
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_yellowpine_present$plotkey <- as.character(fia_species_yellowpine_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_yp_plots <- unique((fia_species_yellowpine_present$plotkey))
+# filter out these plots
+fia_species_yellowpine_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_yp_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_yellowpine_notpresent <-fia_species_yellowpine_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_yellowpine_full <- fia_species_yellowpine_present %>% 
+  full_join(fia_species_yellowpine_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Yellow pine")
+
+fia_yp_summary <- fia_yellowpine_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## pipo
+# note: this is not included in the final data
+fia_species_pipo <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species)%>% 
+  group_by(plotkey,species)%>% 
+  tally()%>% 
+  filter(species == "PIPO") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_pipo$tree_per_hectare)/210
+# mean = 6.65654
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_pipo_present <- fia_species_pipo
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_pipo_present$plotkey <- as.character(fia_species_pipo_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_pipo_plots <- unique((fia_species_pipo_present$plotkey))
+# filter out these plots
+fia_species_pipo_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_pipo_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_pipo_notpresent <-fia_species_pipo_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_pipo_full <- fia_species_pipo_present %>% 
+  full_join(fia_species_pipo_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Ponderosa Pine")
+
+fia_pipo_summary <- fia_pipo_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## pije
+# note: this is not included in the final data
+fia_species_pije <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "PIJE") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_pije$tree_per_hectare)/210
+# mean = 92.05854
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_pije_present <- fia_species_pije
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_pije_present$plotkey <- as.character(fia_species_pije_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_pije_plots <- unique((fia_species_pije_present$plotkey))
+# filter out these plots
+fia_species_pije_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_pije_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_pije_notpresent <-fia_species_pije_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_pije_full <- fia_species_pije_present %>% 
+  full_join(fia_species_pije_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Jeffrey Pine")
+
+fia_pije_summary <- fia_pije_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## abco
+fia_species_abco <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "ABCO") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_abco$tree_per_hectare)/210
+# mean = 77.9665
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_abco_present <- fia_species_abco
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_abco_present$plotkey <- as.character(fia_species_abco_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_abco_plots <- unique((fia_species_abco_present$plotkey))
+# filter out these plots
+fia_species_abco_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_abco_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_abco_notpresent <-fia_species_abco_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_abco_full <- fia_species_abco_present %>% 
+  full_join(fia_species_abco_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "White fir")
+
+fia_abco_summary <- fia_abco_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## pila
+fia_species_pila <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "PILA") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_pila$tree_per_hectare)/210
+# mean = 20.53613
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_pila_present <- fia_species_pila
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_pila_present$plotkey <- as.character(fia_species_pila_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_pila_plots <- unique((fia_species_pila_present$plotkey))
+# filter out these plots
+fia_species_pila_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_pila_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_pila_notpresent <-fia_species_pila_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_pila_full <- fia_species_pila_present %>% 
+  full_join(fia_species_pila_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Sugar pine")
+
+fia_pila_summary <- fia_pila_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## quch
+fia_species_quch <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "QUCH") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_quch$tree_per_hectare)/210
+# mean = 110.6827
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_quch_present <- fia_species_quch
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_quch_present$plotkey <- as.character(fia_species_quch_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_quch_plots <- unique((fia_species_quch_present$plotkey))
+# filter out these plots
+fia_species_quch_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_quch_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_quch_notpresent <-fia_species_quch_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_quch_full <- fia_species_quch_present %>% 
+  full_join(fia_species_quch_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Canyon live oak")
+
+fia_quch_summary <- fia_quch_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## cade
+fia_species_cade <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "CADE") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_cade$tree_per_hectare)/210
+# mean = 16.64135
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_cade_present <- fia_species_cade
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_cade_present$plotkey <- as.character(fia_species_cade_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_cade_plots <- unique((fia_species_cade_present$plotkey))
+# filter out these plots
+fia_species_cade_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_cade_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_cade_notpresent <-fia_species_cade_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_cade_full <- fia_species_cade_present %>% 
+  full_join(fia_species_cade_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Incense cedar")
+
+fia_cade_summary <- fia_cade_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## psma
+# note: this is not included in final data because there are less than 20 plots with psma in vtm data
+fia_species_psma <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "PSMA") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_psma$tree_per_hectare)/210
+# mean = 8.285268
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_psma_present <- fia_species_psma
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_psma_present$plotkey <- as.character(fia_species_psma_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_psma_plots <- unique((fia_species_psma_present$plotkey))
+# filter out these plots
+fia_species_psma_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_psma_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_psma_notpresent <-fia_species_psma_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_psma_full <- fia_species_psma_present %>% 
+  full_join(fia_species_psma_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Bigcone douglas-fir")
+
+fia_psma_summary <- fia_psma_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## quke
+fia_species_quke <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "QUKE") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_quke$tree_per_hectare)/210
+# mean = 26.05965
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_quke_present <- fia_species_quke
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_quke_present$plotkey <- as.character(fia_species_quke_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_quke_plots <- unique((fia_species_quke_present$plotkey))
+# filter out these plots
+fia_species_quke_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_quke_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_quke_notpresent <-fia_species_quke_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_quke_full <- fia_species_quke_present %>% 
+  full_join(fia_species_quke_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "California black oak")
+
+fia_quke_summary <- fia_quke_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+## pico
+fia_species_pico <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species) %>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(species == "PICO") %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# METHOD 1
+sum(fia_species_pico$tree_per_hectare)/210
+# mean = 7.860383
+
+# METHOD 2
+# 1. obtain dataframe of plots containing yellow pine
+fia_species_pico_present <- fia_species_pico
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+fia_species_pico_present$plotkey <- as.character(fia_species_pico_present$plotkey)
+# get unique list of plots with yellow pine
+fia_unique_pico_plots <- unique((fia_species_pico_present$plotkey))
+# filter out these plots
+fia_species_pico_notpresent <- fia_data_raw %>% 
+   rename("plotkey" = "unique_plot") %>%
+  filter(!plotkey %in% c(fia_unique_pico_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_species_pico_notpresent <-fia_species_pico_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_pico_full <- fia_species_pico_present %>% 
+  full_join(fia_species_pico_notpresent) %>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Coulter pine")
+
+fia_pico_summary <- fia_pico_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+# join all species dataframes 
+# notet: we are not including psma or pipo/pije. pipo/pije are captured under "yellow pine"
+fia_species_densities <- fia_abco_summary %>% 
+  full_join(fia_cade_summary) %>% 
+  full_join(fia_pico_summary) %>% 
+  full_join(fia_pila_summary) %>% 
+  full_join(fia_quch_summary) %>%
+  full_join(fia_quke_summary) %>% 
+  full_join(fia_yp_summary) %>% 
+  full_join(fia_psma_summary)
+##------------------------------------------------------------------------------------
+
+# graph species densities
+l_graph_2 <- ggplot(fia_species_densities, aes(x = plot, y = mean))+
+  geom_col(show.legend = FALSE, fill = "#237473", width = 0.5) +
+  geom_text(aes(label = round(mean, 0)), vjust = -0.5)+
+  theme_bw()+
+  labs(title = "YPMC Species Tree Density", x = "Species", y = "Trees/Hectare") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 125))
+l_graph_2
+```
+
+# frequency analysis:species (fia)
+```{r}
+## graph 1: frequency analysis (including zeros)
+fia_abco_full_2 <- fia_abco_full %>% 
+  select(plotkey, plot, total)
+fia_cade_full_2 <- fia_cade_full%>% 
+  select(plotkey, plot, total)
+fia_pila_full_2 <-fia_pila_full %>% 
+  select(plotkey, plot, total)
+fia_yellowpine_full_2 <- fia_yellowpine_full%>% 
+  select(plotkey, plot, total)
+fia_pico_full_2 <- fia_pico_full%>% 
+  select(plotkey, plot, total)
+fia_psma_full_2 <- fia_psma_full%>% 
+  select(plotkey, plot, total)
+fia_quke_full_2 <- fia_quke_full%>% 
+  select(plotkey, plot, total)
+fia_quch_full_2 <- fia_quch_full%>% 
+  select(plotkey, plot, total)
+
+freq_analysis_full <- fia_abco_full_2 %>% 
+  full_join(fia_cade_full_2) %>% 
+  full_join(fia_pila_full_2)  %>%
+  full_join(fia_yellowpine_full_2) %>% 
+  full_join(fia_pico_full_2)  %>% 
+  full_join(fia_psma_full_2)  %>% 
+  full_join(fia_quke_full_2)  %>% 
+  full_join(fia_quch_full_2)%>% 
+  group_by(total, plot) %>% 
+  tally()%>% 
+  mutate(proportion = n/210)
+
+fia_freq_graph_1 <-ggplot(freq_analysis_full, aes(y = proportion, x = total)) +
+  geom_col(show.legend = FALSE, fill = "#237473", width = 0.5)+
+  theme_bw()+
+  facet_wrap(~plot, scales = "free")+
+  theme_bw()+
+  labs(title = "Species Frequency Analysis", subtitle = "FIA Data", x = "Trees per Plot", y = "Proportion of Total Plots") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))
+
+## graph 2: frequency analysis (excluding zeros)
+freq_analysis <- fia_abco_full_2 %>% 
+  full_join(fia_cade_full_2) %>% 
+  full_join(fia_pila_full_2)  %>%
+  full_join(fia_yellowpine_full_2) %>% 
+  full_join(fia_pico_full_2)  %>% 
+  full_join(fia_psma_full_2)  %>% 
+  full_join(fia_quke_full_2)  %>% 
+  full_join(fia_quch_full_2) %>% 
+  filter(!total == "0")%>% 
+  group_by(total, plot) %>% 
+  tally()%>% 
+  mutate(proportion = n/210)
+
+fia_freq_graph_2 <- ggplot(freq_analysis, aes(y = proportion, x = total)) +
+  geom_col(show.legend = FALSE, fill = "#237473", width = 0.5)+
+  theme_bw()+
+  facet_wrap(~plot, scales = "free")+
+  theme_bw()+
+  labs(title = "Species Frequency Analysis (Excluding Absences)", subtitle = "FIA Data", x = "Trees per Plot", y = "Proportion of Total Plots") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))
+
+## graph 3: Species percent absences
+freq_analysis_0 <- fia_abco_full_2 %>% 
+  full_join(fia_cade_full_2) %>% 
+  full_join(fia_pila_full_2)  %>%
+  full_join(fia_yellowpine_full_2) %>% 
+  full_join(fia_pico_full_2)  %>% 
+  full_join(fia_psma_full_2)  %>% 
+  full_join(fia_quke_full_2)  %>% 
+  full_join(fia_quch_full_2) %>% 
+  filter(total == "0") %>% 
+  group_by(plot) %>% 
+  count(total) 
+
+freq_analysis_0_percent <- freq_analysis_0 %>% 
+  mutate(percentage = ((n/210)*100))
+
+fia_freq_graph_3 <-ggplot(freq_analysis_0_percent, aes(y = percentage, x = reorder(plot, -n))) +
+  geom_col(show.legend = FALSE, fill = "#237473", width = 0.5)+
+  theme_bw()+
+  labs(title = "Species Percent Absence", subtitle = "FIA Data", x = "Species", y = "Plot Percentage \n (Percentage of Plots Absent of species") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 100)) +
+  geom_text(aes(label = round(percentage,2), vjust = -0.5))
+```
+
+# tree density by family (fia)
+```{r}
+## oak
+fia_species_oak <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species)%>% 
+  group_by(plotkey,species) %>% 
+  tally()%>% 
+  filter(species %in% c("QUCH", "QUKE"))%>% 
+  group_by(plotkey) %>% 
+  tally(n) %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245))) 
+
+# METHOD 1
+sum(fia_species_oak$tree_per_hectare)/210
+# 136.7423
+  
+# METHOD 2
+# 1. obtain dataframe of plots containing trees of interest
+fia_quercus_present <-fia_species_oak
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+fia_quercus_present$plotkey <- as.character(fia_quercus_present$plotkey)
+# get unique list of plots with trees
+fia_unique_quercus_plots <- unique((fia_quercus_present$plotkey))
+# filter out these plots
+fia_quercus_notpresent <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  filter(!plotkey %in% c(fia_unique_quercus_plots )) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_quercus_notpresent <-fia_quercus_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_quercus_full <- fia_quercus_present %>% 
+  full_join(fia_quercus_notpresent)%>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Oaks")
+
+fia_quercus_summary <- fia_quercus_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median (tree_per_hectare)) 
+##------------------------------------------------------------------------------------
+
+## pine
+fia_species_pine <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species)%>% 
+  group_by(plotkey,species) %>% 
+  tally() %>% 
+  filter(!species %in% c("QUCH", "QUKE")) %>% 
+  group_by(plotkey) %>% 
+  tally(n) %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245))) 
+  
+# METHOD 1
+sum(fia_species_pine$tree_per_hectare)/210
+# 230.0047
+  
+# METHOD 2
+# 1. obtain dataframe of plots containing trees of interest
+fia_pinus_present <-fia_species_pine
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+fia_pinus_present$plotkey <- as.character(fia_pinus_present$plotkey)
+# get unique list of plots with trees
+fia_unique_pinus_plots <- unique((fia_pinus_present$plotkey))
+# filter out these plots
+fia_pinus_notpresent <- fia_data_raw %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  filter(!plotkey %in% c(fia_unique_pinus_plots )) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_pinus_notpresent <-fia_pinus_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+fia_pinus_full <- fia_pinus_present %>% 
+  full_join(fia_pinus_notpresent)%>% 
+  rename("total" = "n") %>% 
+  mutate(plot = "Conifers")
+
+fia_pinus_summary <- fia_pinus_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median (tree_per_hectare))
+##------------------------------------------------------------------------------------
+
+# join all species dataframes 
+oak_pine_densities <- fia_pinus_summary %>% 
+  full_join(fia_quercus_summary) 
+##------------------------------------------------------------------------------------
+
+# graph oak/pine densities
+l_graph_3 <- ggplot(oak_pine_densities, aes(x = plot, y = mean))+
+  geom_col(show.legend = FALSE, fill = "#207735", width = 0.3) +
+  geom_text(aes(label = round(mean, 1)), vjust = -0.5)+
+  theme_bw()+
+  labs(title = "Oak/Conifer Tree Density", x = "Classification", y = "Trees/Hectare") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 250))
+
+```
+
+# tree density by shade and fire tolerant/intolerant-with oaks (fia)
+```{r}
+# Shade Tolerant species: ABCO, CADE, QUCH
+# Shade Intolerant species: PIPO, PIJE, PICO, PSMA, PILA, QUKE
+# After our advisor review meeting, Hugh suggested that we include the oaks in the shade tolerant/intolerant graphs. QUCH is shade tolerant and QUKE is shade intolerant
+
+##------------------------------------------------------------------------------------ 
+
+# create a column for shade tolerant. 
+# 1 = yes, shade tolerant. 
+# 0 = no, shade intolerant
+fia_shade <- fia_data_raw %>%
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey, species) %>% 
+  mutate(shade_tolerant = ifelse(species %in% c("ABCO",
+                                                     "CADE", "QUCH"), "1",
+                                 ifelse(species %in% c("PIPO",
+                                                            "PIJE",
+                                                            "PICO",
+                                                            "PSMA",
+                                                            "PILA", "QUKE"), "0", "NA"))) %>%
+  group_by(plotkey, shade_tolerant) %>%
+  tally() %>% 
+  filter(!shade_tolerant == "NA")
+##------------------------------------------------------------------------------------ 
+
+## shade-tolerant
+
+# METHOD 2
+# 1. obtain dataframe of plots containing trees of interest
+fia_shade_tolerant_present<- fia_shade %>% 
+  filter(shade_tolerant == 1) %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+ 
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+fia_shade_tolerant_present$plotkey <- as.character(fia_shade_tolerant_present$plotkey)
+# get unique list of plots with trees
+fia_unique_shade_tolerant_plots <- unique((fia_shade_tolerant_present$plotkey))
+# filter out these plots
+fia_shade_tolerant_notpresent <- fia_shade %>% 
+  filter(!plotkey %in% c(fia_unique_shade_tolerant_plots))
+
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_shade_tolerant_notpresent <-fia_shade_tolerant_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+fia_shade_tolerant_full<- fia_shade_tolerant_present %>% 
+  full_join(fia_shade_tolerant_notpresent)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "ST/FI")
+fia_shade_tolerant_full$tree_per_hectare <-as.numeric(fia_shade_tolerant_full$tree_per_hectare)
+
+fia_shade_tolerant_summary <- fia_shade_tolerant_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+##------------------------------------------------------------------------------------ 
+
+## shade-intolerant
+
+# METHOD 2
+# 1. obtain dataframe of plots containing trees of interest
+fia_shade_intolerant_present <- fia_shade %>% 
+  filter(shade_tolerant == 0)%>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+fia_shade_intolerant_present$plotkey <- as.character(fia_shade_intolerant_present$plotkey)
+# get unique list of plots with trees
+fia_unique_shade_intolerant_plots <- unique((fia_shade_intolerant_present$plotkey))
+# filter out these plots
+fia_shade_intolerant_notpresent <- fia_shade %>% 
+  filter(!plotkey %in% c(fia_unique_shade_intolerant_plots)) 
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_shade_intolerant_notpresent <-fia_shade_intolerant_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+fia_shade_intolerant_full<- fia_shade_intolerant_present %>% 
+  full_join(fia_shade_intolerant_notpresent)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "SI/FT")
+fia_shade_intolerant_full$tree_per_hectare <-as.numeric(fia_shade_intolerant_full$tree_per_hectare)
+
+fia_shade_intolerant_summary <- fia_shade_intolerant_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+##------------------------------------------------------------------------------------ 
+
+# combine the two data frames
+fia_combined_tolerance <- do.call("rbind", list(fia_shade_intolerant_summary, fia_shade_tolerant_summary))
+##------------------------------------------------------------------------------------ 
+
+# Graph of tolerant and intolerant densities
+l_graph_4 <- ggplot(fia_combined_tolerance, aes(x = plot, y = mean)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by Shade and Fire Tolerance", x = "Tolerance", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10)) 
+l_graph_4
+```
+
+# tree density by shade and fire tolerant/intolerant-without oaks (fia)
+```{r}
+# Shade Tolerant species: ABCO, CADE
+# Shade Intolerant species: PIPO, PIJE, PICO, PSMA, PILA
+# After our advisor review meeting, Hugh suggested that we include the oaks in the shade tolerant/intolerant graphs. QUCH is shade tolerant and QUKE is shade intolerant
+
+##------------------------------------------------------------------------------------ 
+
+# create a column for shade tolerant. 
+# 1 = yes, shade tolerant. 
+# 0 = no, shade intolerant
+fia_shade_no_oak <- fia_data_raw %>%
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey, species) %>% 
+  mutate(shade_tolerant = ifelse(species %in% c("ABCO",
+                                                     "CADE"), "1",
+                                 ifelse(species %in% c("PIPO",
+                                                            "PIJE",
+                                                            "PICO",
+                                                            "PSMA",
+                                                            "PILA"), "0", "NA"))) %>%
+  group_by(plotkey, shade_tolerant) %>%
+  tally() %>% 
+  filter(!shade_tolerant == "NA")
+##------------------------------------------------------------------------------------ 
+
+## shade-tolerant
+
+# METHOD 2
+# 1. obtain dataframe of plots containing trees of interest
+fia_shade_tolerant_present_no_oak<- fia_shade_no_oak %>% 
+  filter(shade_tolerant == 1) %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+ 
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+fia_shade_tolerant_present_no_oak$plotkey <- as.character(fia_shade_tolerant_present_no_oak$plotkey)
+# get unique list of plots with trees
+fia_unique_shade_tolerant_plots_no_oak <- unique((fia_shade_tolerant_present_no_oak$plotkey))
+# filter out these plots
+fia_shade_tolerant_notpresent_no_oak <- fia_shade_no_oak%>% 
+  filter(!plotkey %in% c(fia_unique_shade_tolerant_plots_no_oak))
+
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_shade_tolerant_notpresent_no_oak <-fia_shade_tolerant_notpresent_no_oak %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+fia_shade_tolerant_full_no_oak<- fia_shade_tolerant_present_no_oak %>% 
+  full_join(fia_shade_tolerant_notpresent_no_oak)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "ST/FI")
+fia_shade_tolerant_full_no_oak$tree_per_hectare <-as.numeric(fia_shade_tolerant_full_no_oak$tree_per_hectare)
+
+fia_shade_tolerant_summary_no_oak <- fia_shade_tolerant_full_no_oak %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+##------------------------------------------------------------------------------------ 
+
+## shade-intolerant
+
+# METHOD 2
+# 1. obtain dataframe of plots containing trees of interest
+fia_shade_intolerant_present_no_oak <- fia_shade_no_oak %>% 
+  filter(shade_tolerant == 0)%>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+fia_shade_intolerant_present_no_oak$plotkey <- as.character(fia_shade_intolerant_present_no_oak$plotkey)
+# get unique list of plots with trees
+fia_unique_shade_intolerant_plots_no_oak <- unique((fia_shade_intolerant_present_no_oak$plotkey))
+# filter out these plots
+fia_shade_intolerant_notpresent_no_oak <- fia_shade_no_oak %>% 
+  filter(!plotkey %in% c(fia_unique_shade_intolerant_plots_no_oak)) 
+
+# 3. create columns in the notpresent dataset to match present dataset
+fia_shade_intolerant_notpresent_no_oak <-fia_shade_intolerant_notpresent_no_oak %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+fia_shade_intolerant_full_no_oak<- fia_shade_intolerant_present_no_oak %>% 
+  full_join(fia_shade_intolerant_notpresent_no_oak)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "SI/FT")
+fia_shade_intolerant_full_no_oak$tree_per_hectare <-as.numeric(fia_shade_intolerant_full_no_oak$tree_per_hectare)
+
+fia_shade_intolerant_summary_no_oak <- fia_shade_intolerant_full_no_oak %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+##------------------------------------------------------------------------------------ 
+
+# combine the two data frames
+fia_combined_tolerance_no_oak <- do.call("rbind", list(fia_shade_intolerant_summary_no_oak, fia_shade_tolerant_summary_no_oak))
+##------------------------------------------------------------------------------------ 
+
+# Graph of tolerant and intolerant densities
+l_graph_4.5 <- ggplot(fia_combined_tolerance_no_oak, aes(x = plot, y = mean)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by Shade and Fire Tolerance", x = "Tolerance", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10)) 
+#l_graph_4.5
+```
+# tree density by national forest (fia)
+# Leana not sure this makes sense to do?? 
+
+# I think we would just divide by the number of plots in each national forest and not total plots (HGW)
+```{r}
+# ok so I just wanted to explore some code and it seems like it would be pretty hefty.. You'd want to filter each nf and then by each species. A graph with all nf on it wouldn't be nice (too much going on). Not sure if this is worth it.. 
+fia_anf <- fia_data_raw %>%
+  filter(admin_forest == "ANF")
+  # select(admin_forest, unique_plot, species) %>%
+  # mutate(tree_per_hectare = (n * (1/0.067245)))
+
+## yellow pine
+# Yellow pine includes Jeffrey and Ponderosa pines
+fia_anf_yp<- fia_anf %>% 
+  rename("plotkey" = "unique_plot") %>% 
+  select(plotkey,species)%>% 
+  group_by(plotkey,species)%>% 
+  tally()%>% 
+  filter(species %in% c("PIPO", "PIJE")) %>% 
+  group_by(plotkey) %>% 
+  tally(n)%>% ## this extra code is needed here, because there are two species and therefore the plotkey could be duplicated
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+```
+
+
+# tree density by elevation (fia)
+# Leana not sure this makes sense to do??
+
+### VTM
+
+# read in data (vtm)
+```{r}
+# read in data
+vtm_data <- read.table(here::here("vtm_data", "vtm_dataset_750m_buffer_FINAL.txt")) %>% 
+  mutate_if(is.numeric, ~replace(., is.na(.), 0))%>% 
+  mutate(n= dbh_4_11 + dbh_12_23 + dbh_24_35 +dbh_36) 
+
+# figure out total number of plots in assessment area
+vtm_plot_total <- vtm_data %>%
+  select(plotkey) %>%
+  group_by(plotkey) %>%
+  tally()
+# 195 plots - Leana, do you want to check to make sure that's right? This is right! There are 195 vtm plots!
+# You can also do the following:
+# unique(vtm_plot_total$plotkey)
+```
+
+# total tree density (vtm)
+# Same as previous analysis
+```{r}
+# select columns of interest
+vtm_data_select <- vtm_data %>% 
+  select(plotkey, n)%>% 
+  group_by(plotkey) %>% 
+  tally(n) %>% 
+  mutate("plot" = "VTM")
+
+# multiply n by (1/.0809) to convert to trees/hectare instead of trees/.08 hecare
+vtm_data_hecare <- vtm_data_select %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+
+# find the average of trees_per_hectare column
+sum(vtm_data_hecare $tree_per_hectare)/195
+vtm_median <-median(vtm_data_hecare $tree_per_hectare)
+# mean 223.2576
+# all vtm plots included in this dataframe!!
+
+vtm_total_summary <- vtm_data_hecare %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare)) 
+##------------------------------------------------------------------------------------
+
+# graph
+l_graph_5 <- ggplot(vtm_total_summary , aes(x = plot, y = mean))+
+  geom_col(show.legend = FALSE, fill = "#9A2130", width = 0.2) +
+  geom_text(aes(label = round(mean, 1)), vjust = -0.5)+
+  geom_point(aes(x = plot, y = median)) +
+  theme_bw()+
+  labs(title = "YPMC Tree Density", x = "", y = "Trees/Hectare") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 400))
+```
+
+#total tree density excluding oaks (vtm)
+```{r}
+vtm_data_select_no_oak <- vtm_data %>% 
+  filter(!name %in% c ("Quercus kelloggii ", "Quercus chrysolepis ")) %>% 
+  select(plotkey, n)%>% 
+  group_by(plotkey) %>% 
+  tally(n) %>% 
+  mutate("plot" = "VTM")
+
+unique(vtm_data$plotkey)
+#195
+unique(vtm_data_select_no_oak$plotkey)
+#195
+
+# multiply n by (1/.0809) to convert to trees/hectare instead of trees/.08 hecare
+vtm_data_hecare_no_oak <- vtm_data_select_no_oak %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+
+# find the average of trees_per_hectare column
+sum(vtm_data_hecare_no_oak$tree_per_hectare)/195
+#178.0609
+
+vtm_data_hecare_no_oak_sum <- vtm_data_hecare_no_oak %>% 
+  summarize(mean= mean(tree_per_hectare),
+            standard_deviation = sd(tree_per_hectare, na.rm = TRUE),
+            sample_size = n(),
+            standard_error = sd(tree_per_hectare, na.rm = TRUE) / sqrt(n()),) 
+```
+
+# tree density by species (vtm)
+```{r}
+# -------------------------------------------------------------------------------------
+
+## yellow pine
+# Yellow pine includes Jeffrey and Ponderosa pines
+# 145 plots
+vtm_species_yellowpine <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PIPO", "PIJE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 145)/195))
+
+mean(vtm_species_yellowpine$overall_density)
+# 89.12554
+# median(vtm_species_yellowpine$overall_density)
+## This would not be the median, because all the "zeros" have not been included in the dataset. For the landscape wide density, I don't think median is really useful at all, because in many cases it may just be zero. 
+
+# make new dataframe for yellow pine (might not be used if we keep pipo and pije seperate)
+yellowpine <- data.frame("yellowpine", mean(vtm_species_yellowpine$overall_density), median(vtm_species_yellowpine$overall_density)) %>%
+  rename ("plots" = "X.yellowpine.", "mean" = "mean.vtm_species_yellowpine.overall_density.", "median" = "median.vtm_species_yellowpine.overall_density.")
+
+## Leana double checking Hannah's method
+vtm_species_yellowpine_2 <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PIPO", "PIJE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+checking_mean <- sum(vtm_species_yellowpine_2$tree_per_hectare)/195
+# yep, looks good!
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing yellow pine
+vtm_species_yellowpine_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PIPO", "PIJE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing yellow pine
+# first convert the plotkey column to character
+vtm_species_yellowpine_present$plotkey <- as.character(vtm_species_yellowpine_present$plotkey)
+# get unique list of plots with yellow pine
+unique_ypmc_plots <- unique((vtm_species_yellowpine_present$plotkey))
+# filter out these plots
+vtm_species_yellowpine_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_ypmc_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_yellowpine_notpresent <-vtm_species_yellowpine_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_yellowpine_full <- vtm_species_yellowpine_present %>% 
+  full_join(vtm_species_yellowpine_notpresent) %>% 
+  rename("total" = "n")
+
+yp_summary <- vtm_yellowpine_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+yp_summary <- yp_summary %>% 
+  mutate(species = "Yellow pine")
+# ---------------------------------------------------------------------------------------
+
+## pipo 
+# NOTE: grouped into "yellow pine" for final analysis
+# 82 plots with PIPO
+
+vtm_species_pipo <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "PIPO") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 82)/195))
+
+# tested a different method here
+# mean(vtm_species_pipo$tree_per_hectare)
+# overall_density <- (((mean(vtm_species_pipo$tree_per_hectare)) * 82)/ 195)
+
+mean(vtm_species_pipo$overall_density)
+# 54.83186
+# median(vtm_species_pipo$overall_density)
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_pipo_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PIPO")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_pipo_present$plotkey <- as.character(vtm_species_pipo_present$plotkey)
+# get unique list of plots with trees
+unique_pipo_plots <- unique((vtm_species_pipo_present$plotkey))
+# filter out these plots
+vtm_species_pipo_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_pipo_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_pipo_notpresent <-vtm_species_pipo_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_pipo_full <- vtm_species_pipo_present %>% 
+  full_join(vtm_species_pipo_notpresent) %>% 
+  rename("total" = "n")
+
+pipo_summary <- vtm_pipo_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+pipo_summary <- pipo_summary %>% 
+  mutate(species = "Ponderosa pine")
+# -------------------------------------------------------------------------------------
+
+## pije 
+# NOTE: grouped into "yellow pine" for final analysis
+# 67 plots 
+
+vtm_species_pije <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "PIJE") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 67)/195))
+
+mean(vtm_species_pije$overall_density)
+# 34.29368
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_pije_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PIJE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_pije_present$plotkey <- as.character(vtm_species_pije_present$plotkey)
+# get unique list of plots with trees
+unique_pije_plots <- unique((vtm_species_pije_present$plotkey))
+# filter out these plots
+vtm_species_pije_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_pije_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_pije_notpresent <-vtm_species_pije_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_pije_full <- vtm_species_pije_present %>% 
+  full_join(vtm_species_pije_notpresent)%>% 
+  rename("total" = "n")
+
+pije_summary <- vtm_pije_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+pije_summary <- pije_summary %>% 
+  mutate(species = "Jeffery pine")
+# -------------------------------------------------------------------------------------
+
+## pila
+# 70 plots
+vtm_species_pila <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "PILA") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 70)/195))
+
+mean(vtm_species_pila$overall_density)
+# 20.47479
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_pila_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PILA")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_pila_present$plotkey <- as.character(vtm_species_pila_present$plotkey)
+# get unique list of plots with trees
+unique_pila_plots <- unique((vtm_species_pila_present$plotkey))
+# filter out these plots
+vtm_species_pila_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_pila_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_pila_notpresent <-vtm_species_pila_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_pila_full <- vtm_species_pila_present %>% 
+  full_join(vtm_species_pila_notpresent)%>% 
+  rename("total" = "n")
+
+pila_summary <- vtm_pila_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+pila_summary <- pila_summary %>% 
+  mutate(species = "Sugar pine")
+# -------------------------------------------------------------------------------------
+
+## pico
+# 24 plots
+vtm_species_pico <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "PICO3") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 24)/195))
+
+mean(vtm_species_pico$overall_density)
+# 10.2057
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_pico_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PICO3")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_pico_present$plotkey <- as.character(vtm_species_pico_present$plotkey)
+# get unique list of plots with trees
+unique_pico_plots <- unique((vtm_species_pico_present$plotkey))
+# filter out these plots
+vtm_species_pico_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_pico_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_pico_notpresent <-vtm_species_pico_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_pico_full <- vtm_species_pico_present %>% 
+  full_join(vtm_species_pico_notpresent)%>% 
+  rename("total" = "n")
+
+pico_summary <- vtm_pico_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+pico_summary <- pico_summary %>% 
+  mutate(species = "Coulter pine")
+# -------------------------------------------------------------------------------------
+
+## psma
+# 13 plots
+vtm_species_psma <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "PSMA") %>%
+  slice(-c(14)) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 13)/195))
+
+mean(vtm_species_psma$overall_density)
+# 3.613198
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_psma_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("PSMA")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_psma_present$plotkey <- as.character(vtm_species_psma_present$plotkey)
+# get unique list of plots with trees
+unique_psma_plots <- unique((vtm_species_psma_present$plotkey))
+# filter out these plots
+vtm_species_psma_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_psma_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_psma_notpresent <-vtm_species_psma_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_psma_full <- vtm_species_psma_present %>% 
+  full_join(vtm_species_psma_notpresent)%>% 
+  rename("total" = "n")
+
+psma_summary <- vtm_psma_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+psma_summary <- psma_summary %>% 
+  mutate(species = "Bigcone douglas-fir")
+# -------------------------------------------------------------------------------------
+
+## cade
+# 37 plots
+vtm_species_cade <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "CADE") %>%
+  slice(c(-32)) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 37)/195))
+
+mean(vtm_species_cade$overall_density)
+# 12.74128
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_cade_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("CADE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_cade_present$plotkey <- as.character(vtm_species_cade_present$plotkey)
+# get unique list of plots with trees
+unique_cade_plots <- unique((vtm_species_cade_present$plotkey))
+# filter out these plots
+vtm_species_cade_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_cade_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_cade_notpresent <-vtm_species_cade_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_cade_full <- vtm_species_cade_present %>% 
+  full_join(vtm_species_cade_notpresent)%>% 
+  rename("total" = "n")
+
+cade_summary <- vtm_cade_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+cade_summary <- cade_summary %>% 
+  mutate(species = "Incense cedar")
+# -------------------------------------------------------------------------------------
+
+## abco
+# 92 plots
+vtm_species_abco <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "ABCO") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 92)/195))
+
+mean(vtm_species_abco$overall_density)
+# 41.07635
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_abco_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("ABCO")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_abco_present$plotkey <- as.character(vtm_species_abco_present$plotkey)
+# get unique list of plots with trees
+unique_abco_plots <- unique((vtm_species_abco_present$plotkey))
+# filter out these plots
+vtm_species_abco_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_abco_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_abco_notpresent <-vtm_species_abco_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_abco_full <- vtm_species_abco_present %>% 
+  full_join(vtm_species_abco_notpresent)%>% 
+  rename("total" = "n")
+
+abco_summary <- vtm_abco_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+abco_summary <- abco_summary %>% 
+  mutate(species = "White fir")
+# -------------------------------------------------------------------------------------
+
+## quch
+# 39 plots
+vtm_species_quch <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "QUCH") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 39)/195))
+
+mean(vtm_species_quch$overall_density)
+# 19.08022
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_quch_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("QUCH")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_quch_present$plotkey <- as.character(vtm_species_quch_present$plotkey)
+# get unique list of plots with trees
+unique_quch_plots <- unique((vtm_species_quch_present$plotkey))
+# filter out these plots
+vtm_species_quch_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_quch_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_quch_notpresent <-vtm_species_quch_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_quch_full <- vtm_species_quch_present %>% 
+  full_join(vtm_species_quch_notpresent)%>% 
+  rename("total" = "n")
+
+quch_summary <- vtm_quch_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare))
+ quch_summary <- quch_summary %>% 
+  mutate(species = "Canyon live oak")
+# -------------------------------------------------------------------------------------
+
+## quke
+# 55 plots
+vtm_species_quke <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation == "QUKE") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 55)/195))
+
+mean(vtm_species_quke$overall_density)
+# 26.11645
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_species_quke_present <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>%
+  filter(abbreviation %in% c("QUKE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_species_quke_present$plotkey <- as.character(vtm_species_quke_present$plotkey)
+# get unique list of plots with trees
+unique_quke_plots <- unique((vtm_species_quke_present$plotkey))
+# filter out these plots
+vtm_species_quke_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_quke_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_species_quke_notpresent <-vtm_species_quke_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_quke_full <- vtm_species_quke_present %>% 
+  full_join(vtm_species_quke_notpresent)%>% 
+  rename("total" = "n")
+
+quke_summary <- vtm_quke_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median(tree_per_hectare)) 
+ quke_summary <- quke_summary %>% 
+  mutate(species = "California black oak")
+#---------------------------------------------------------
+
+  # combine all the data frames
+landscape_density <- do.call("rbind", list(abco_summary, cade_summary, pico_summary, pije_summary, pila_summary, pipo_summary, psma_summary, quch_summary, quke_summary))
+
+
+landscape_density_yellowpine <- do.call("rbind", list(abco_summary, cade_summary, pico_summary, yp_summary, pila_summary, quch_summary, quke_summary, psma_summary))
+# -------------------------------------------------------------------------------------
+# Make the graph (pipo and pije seperate)
+l_graph_5_point_5 <- ggplot(landscape_density, aes(x = species, y = mean)) + 
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by Species (Landscape)", x = "species", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10))
+
+# Make the graph (yellowpine)
+l_graph_6 <- ggplot(landscape_density_yellowpine, aes(x = species, y = mean)) + 
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by Species (Landscape)", x = "species", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10))
+```
+
+# frequency analysis:species (vtm)
+```{r}
+## graph 1: frequency analysis (including zeros)
+vtm_abco_full_2 <- vtm_abco_full %>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "White fir")
+vtm_cade_full_2 <- vtm_cade_full%>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "Incense cedar")
+vtm_pila_full_2 <-vtm_pila_full %>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "Sugar pine")
+vtm_yellowpine_full_2 <- vtm_yellowpine_full%>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "Yellow pine")
+vtm_pico_full_2 <- vtm_pico_full%>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "Coulter pine")
+vtm_psma_full_2 <- vtm_psma_full%>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "Bigcone douglas-fir")
+vtm_quke_full_2 <- vtm_quke_full%>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "California black oak")
+vtm_quch_full_2 <- vtm_quch_full%>% 
+  select(plotkey, total) %>% 
+  mutate(plot = "Canyon live oak")
+
+ vtm_freq_analysis_full <- vtm_abco_full_2 %>% 
+  full_join(vtm_cade_full_2) %>% 
+  full_join(vtm_pila_full_2)  %>%
+  full_join(vtm_yellowpine_full_2) %>% 
+  full_join(vtm_pico_full_2)  %>% 
+  full_join(vtm_psma_full_2)  %>% 
+  full_join(vtm_quke_full_2)  %>% 
+  full_join(vtm_quch_full_2)%>% 
+  group_by(total, plot) %>% 
+  tally()%>% 
+  mutate(proportion = n/195)
+
+vtm_freq_graph_1 <-ggplot( vtm_freq_analysis_full, aes(y = proportion, x = total)) +
+  geom_col(show.legend = FALSE, fill = "#237473", width = 0.5)+
+  theme_bw()+
+  facet_wrap(~plot, scales = "free")+
+  theme_bw()+
+  labs(title = "Species Frequency Analysis", subtitle = "VTM Data", x = "Trees per Plot", y = "Proportion of Total Plots") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))
+
+
+## graph 2: frequency analysis (excluding zeros)
+vtm_freq_analysis <- vtm_abco_full_2 %>% 
+  full_join(vtm_cade_full_2) %>% 
+  full_join(vtm_pila_full_2)  %>%
+  full_join(vtm_yellowpine_full_2) %>% 
+  full_join(vtm_pico_full_2)  %>% 
+  full_join(vtm_psma_full_2)  %>% 
+  full_join(vtm_quke_full_2)  %>% 
+  full_join(vtm_quch_full_2) %>% 
+  filter(!total == "0")%>% 
+  group_by(total, plot) %>% 
+  tally()%>% 
+  mutate(proportion = n/195)
+
+vtm_freq_graph_2 <- ggplot(vtm_freq_analysis, aes(y = proportion, x = total)) +
+  geom_col(show.legend = FALSE, fill = "#237473", width = 0.5)+
+  theme_bw()+
+  facet_wrap(~plot, scales = "free")+
+  theme_bw()+
+  labs(title = "Species Frequency Analysis (Excluding Absences)", subtitle = "VTM Data", x = "Trees per Plot", y = "Proportion of Total Plots") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))
+
+## graph 3: Species percent absences
+vtm_freq_analysis_0 <- vtm_abco_full_2 %>% 
+  full_join(vtm_cade_full_2) %>% 
+  full_join(vtm_pila_full_2)  %>%
+  full_join(vtm_yellowpine_full_2) %>% 
+  full_join(vtm_pico_full_2)  %>% 
+  full_join(vtm_psma_full_2)  %>% 
+  full_join(vtm_quke_full_2)  %>% 
+  full_join(vtm_quch_full_2) %>% 
+  filter(total == "0") %>% 
+  group_by(plot) %>% 
+  count(total)
+
+vtm_freq_analysis_0_percent <- vtm_freq_analysis_0 %>% 
+  mutate(percentage = ((n/195)*100))
+
+vtm_freq_graph_3 <-ggplot(vtm_freq_analysis_0_percent , aes(y = percentage, x = reorder(plot, -n))) +
+  geom_col(show.legend = FALSE, fill = "#237473", width = 0.5)+
+  theme_bw()+
+  labs(title = "Species Percent Absence", subtitle = "VTM Data", x = "Species", y = "Plot Percentage \n (Percentage of Plots Absent of species") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 110)) +
+  geom_text(aes(label = round(percentage,2), vjust = -0.5))
+
+vtm_freq_graph_1
+vtm_freq_graph_2
+vtm_freq_graph_3
+```
+
+# tree density by family (vtm)
+```{r}
+# -------------------------------------------------------------------------------------
+
+## pinus 
+# 195 plots
+vtm_pinus <- vtm_data %>%
+  select(genus, abbreviation, n, plotkey) %>%
+  filter(!abbreviation %in% c("QUCH", "QUKE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 195)/195))
+
+mean(vtm_pinus$overall_density)
+# 178.0609
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_pinus_present <- vtm_data %>%
+  select(abbreviation,n,plotkey,genus) %>%
+  filter(!abbreviation %in% c("QUCH", "QUKE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_pinus_present$plotkey <- as.character(vtm_pinus_present$plotkey)
+# get unique list of plots with trees
+unique_pinus_plots <- unique((vtm_pinus_present$plotkey))
+# filter out these plots
+vtm_pinus_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_pinus_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_pinus_notpresent <-vtm_pinus_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_pinus_full <- vtm_pinus_present %>% 
+  full_join(vtm_pinus_notpresent)%>% 
+  rename("total" = "n")
+
+pinus_summary <- vtm_pinus_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median (tree_per_hectare)) 
+ pinus_summary <- pinus_summary %>% 
+  mutate(plot = "Conifers")
+# -------------------------------------------------------------------------------------
+
+ ## quercus
+# 78 plots
+vtm_quercus <- vtm_data %>%
+  select(genus, abbreviation, n, plotkey) %>%
+  filter(abbreviation %in% c("QUCH", "QUKE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  mutate(overall_density = ((tree_per_hectare * 78)/195))
+ 
+ mean(vtm_quercus$overall_density)
+ # 45.19667
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_quercus_present <- vtm_data %>%
+  select(abbreviation,n,plotkey,genus) %>%
+  filter(abbreviation %in% c("QUCH", "QUKE")) %>%
+  group_by(plotkey) %>%
+  tally(n) %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_quercus_present$plotkey <- as.character(vtm_quercus_present$plotkey)
+# get unique list of plots with trees
+unique_quercus_plots <- unique((vtm_quercus_present$plotkey))
+# filter out these plots
+vtm_quercus_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_quercus_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_quercus_notpresent <-vtm_quercus_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0"))
+
+# 4. join dataframes
+vtm_quercus_full <- vtm_quercus_present %>% 
+  full_join(vtm_quercus_notpresent)%>% 
+  rename("total" = "n")
+
+quercus_summary <- vtm_quercus_full %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()),
+    var = var(tree_per_hectare),
+    median = median (tree_per_hectare)) 
+quercus_summary <- quercus_summary %>% 
+  mutate(plot = "Oaks")
+# -------------------------------------------------------------------------------------
+# combine data frames
+pinus_v_quercus <- do.call("rbind", list(quercus_summary, pinus_summary))
+# -------------------------------------------------------------------------------------
+# Make a graph
+l_graph_7 <- ggplot(pinus_v_quercus, aes(x = plot, y = mean)) + 
+  geom_col(show.legend = FALSE) +
+  labs(title = "Landscape Density of Oak and Conifer Species", x = "Classification", y = "Trees/Ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10))
+# l_graph_7
+```
+
+# tree density by shade and fire tolerant/intolerant-with oaks (vtm)
+```{r}
+# -------------------------------------------------------------------------------------
+# Shade Tolerant/Fire Intolerant species: ABCO, CADE, QUCH
+# Shade Intolerant/Fire Tolerant species: PIPO, PIJE, PICO, PSMA, PILA, QUKE
+# Hugh suggested we include the oaks in this graph
+
+# create a column for shade tolerant. 
+# 1 = yes, shade tolerant. 
+# 0 = no, shade intolerant
+vtm_shade <- vtm_data %>%
+  select(plotkey, abbreviation, n) %>%
+  mutate(shade_tolerant = ifelse(abbreviation %in% c("ABCO",
+                                                     "CADE", "QUCH"), "1",
+                                 ifelse(abbreviation %in% c("PIPO",
+                                                            "PIJE",
+                                                            "PICO3",
+                                                            "PSMA",
+                                                            "PILA",
+                                                            "QUKE"), "0", "NA"))) %>%
+  group_by(plotkey, shade_tolerant) %>%
+  tally(n) %>% 
+  filter(!shade_tolerant == "NA")
+# -------------------------------------------------------------------------------------
+
+## Shade tolerant
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_shade_tolerant_present <- vtm_shade %>%
+  filter(shade_tolerant == "1") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_shade_tolerant_present$plotkey <- as.character(vtm_shade_tolerant_present$plotkey)
+# get unique list of plots with trees
+unique_shade_tolerant_plots <- unique((vtm_shade_tolerant_present$plotkey))
+# filter out these plots
+vtm_shade_tolerant_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_shade_tolerant_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_shade_tolerant_notpresent <-vtm_shade_tolerant_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+vtm_shade_tolerant_full<- vtm_shade_tolerant_present %>% 
+  full_join(vtm_shade_tolerant_notpresent)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "ST/FI")
+vtm_shade_tolerant_full$tree_per_hectare <-as.numeric(vtm_shade_tolerant_full$tree_per_hectare)
+
+shade_tolerant_summary <- vtm_shade_tolerant_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+# -------------------------------------------------------------------------------------
+
+## Shade intolerant
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_shade_intolerant_present <- vtm_shade %>%
+  filter(shade_tolerant == "0") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_shade_intolerant_present$plotkey <- as.character(vtm_shade_intolerant_present$plotkey)
+# get unique list of plots with trees
+unique_shade_intolerant_plots <- unique((vtm_shade_intolerant_present$plotkey))
+# filter out these plots
+vtm_shade_intolerant_notpresent <- vtm_data %>% 
+  filter(!plotkey %in% c(unique_shade_intolerant_plots)) %>% 
+  group_by(plotkey) %>% 
+  tally()
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_shade_intolerant_notpresent <-vtm_shade_intolerant_notpresent %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+vtm_shade_intolerant_full<- vtm_shade_intolerant_present %>% 
+  full_join(vtm_shade_intolerant_notpresent)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "SI/FT")
+ 
+shade_intolerant_summary <- vtm_shade_intolerant_full %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+# -------------------------------------------------------------------------------------
+# combine data frames
+combined_tolerance <- do.call("rbind", list(shade_intolerant_summary, shade_tolerant_summary))
+# -------------------------------------------------------------------------------------
+# Make graph
+l_graph_8 <-ggplot(combined_tolerance, aes(x = plot, y = mean)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Landscape Density by Shade and Fire Tolerance", x = "Tolerance", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10)) 
+# l_graph_8
+```
+
+# tree density by shade and fire tolerant/intolerant-without oaks (vtm)
+```{r}
+# -------------------------------------------------------------------------------------
+# Shade Tolerant/Fire Intolerant species: ABCO, CADE
+# Shade Intolerant/Fire Tolerant species: PIPO, PIJE, PICO, PSMA, PILA
+
+# create a column for shade tolerant. 
+# 1 = yes, shade tolerant. 
+# 0 = no, shade intolerant
+vtm_shade_no_oak <- vtm_data %>%
+  select(plotkey, abbreviation, n) %>%
+  mutate(shade_tolerant = ifelse(abbreviation %in% c("ABCO",
+                                                     "CADE"), "1",
+                                 ifelse(abbreviation %in% c("PIPO",
+                                                            "PIJE",
+                                                            "PICO3",
+                                                            "PSMA",
+                                                            "PILA"), "0", "NA"))) %>%
+  group_by(plotkey, shade_tolerant) %>%
+  tally(n) %>% 
+  filter(!shade_tolerant == "NA")
+# -------------------------------------------------------------------------------------
+
+## Shade tolerant
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_shade_tolerant_present_no_oak <- vtm_shade_no_oak %>%
+  filter(shade_tolerant == "1") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_shade_tolerant_present_no_oak$plotkey <- as.character(vtm_shade_tolerant_present_no_oak$plotkey)
+# get unique list of plots with trees
+unique_shade_tolerant_plots_no_oak <- unique((vtm_shade_tolerant_present_no_oak$plotkey))
+# filter out these plots
+vtm_shade_tolerant_notpresent_no_oak <- vtm_shade_no_oak %>% 
+  filter(!plotkey %in% c(unique_shade_tolerant_plots_no_oak)) 
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_shade_tolerant_notpresent_no_oak <-vtm_shade_tolerant_notpresent_no_oak %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+vtm_shade_tolerant_full_no_oak<- vtm_shade_tolerant_present_no_oak %>% 
+  full_join(vtm_shade_tolerant_notpresent_no_oak)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "ST/FI")
+vtm_shade_tolerant_full_no_oak$tree_per_hectare <-as.numeric(vtm_shade_tolerant_full_no_oak$tree_per_hectare)
+
+shade_tolerant_summary_no_oak <- vtm_shade_tolerant_full_no_oak %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+# -------------------------------------------------------------------------------------
+
+## Shade intolerant
+
+## METHOD NUMBER 2
+
+# 1. obtain dataframe of plots containing trees of interest
+vtm_shade_intolerant_present_no_oak <- vtm_shade_no_oak %>%
+  filter(shade_tolerant == "0") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+# 2.  obtain dataframe of plots NOT containing trees of interest
+# first convert the plotkey column to character
+vtm_shade_intolerant_present_no_oak$plotkey <- as.character(vtm_shade_intolerant_present_no_oak$plotkey)
+# get unique list of plots with trees
+unique_shade_intolerant_plots_no_oak <- unique((vtm_shade_intolerant_present_no_oak$plotkey))
+# filter out these plots
+vtm_shade_intolerant_notpresent_no_oak <- vtm_shade_no_oak %>% 
+  filter(!plotkey %in% c(unique_shade_intolerant_plots_no_oak)) 
+
+# 3. create columns in the notpresent dataset to match present dataset
+vtm_shade_intolerant_notpresent_no_oak <-vtm_shade_intolerant_notpresent_no_oak %>% 
+  mutate(n = as.numeric("0")) %>% 
+  mutate(tree_per_hectare = as.numeric("0")) %>% 
+  mutate(shade_tolerant = as.character("0"))
+
+# 4. join dataframes
+vtm_shade_intolerant_full_no_oak<- vtm_shade_intolerant_present_no_oak %>% 
+  full_join(vtm_shade_intolerant_notpresent_no_oak)%>% 
+  rename("total" = "n") %>% 
+  select(-shade_tolerant) %>% 
+  select(-total) %>% 
+  mutate(plot = "SI/FT")
+ 
+shade_intolerant_summary_no_oak <- vtm_shade_intolerant_full_no_oak %>% 
+  group_by(plot) %>% 
+  summarize(
+    mean = mean(tree_per_hectare),
+    sd = sd(tree_per_hectare),
+    sample_size = n(),
+    se = sd(tree_per_hectare)/sqrt(n()))
+# -------------------------------------------------------------------------------------
+# combine data frames
+combined_tolerance_no_oak <- do.call("rbind", list(shade_intolerant_summary_no_oak, shade_tolerant_summary_no_oak))
+# -------------------------------------------------------------------------------------
+# Make graph
+l_graph_8.5 <-ggplot(combined_tolerance_no_oak, aes(x = plot, y = mean)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Landscape Density by Shade and Fire Tolerance", x = "Tolerance", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10)) 
+# l_graph_8.5
+```
+# tree density by national forest (vtm)
+# Leana not sure this makes sense to do??
+
+# tree density by elevation (vtm)
+# Leana not sure this makes sense to do??
+
+### Combined VTM and FIA graphs
+
+# total tree density (combined)
+# Same as previous analysis
+```{r}
+# fia_total_summary = FIA datga
+# vtm_total_summary = VTM data
+##----------------------------------------------------------------------------------
+
+# add columns to specify data source (vtm or fia)
+fia_total_summary_2 <- fia_total_summary
+
+vtm_total_summary_2 <- vtm_total_summary 
+##------------------------------------------------------------------------------------
+
+# combine vtm and fia data
+combined_total_density <- fia_total_summary_2  %>% 
+  full_join(vtm_total_summary_2) 
+##------------------------------------------------------------------------------------  
+
+# create a factor orders
+total_fill_order <- c("VTM", "FIA")
+##------------------------------------------------------------------------------------
+
+# make graph
+total_density_graph <- ggplot(combined_total_density,aes(x=factor(plot, total_fill_order),y=mean, fill=factor(plot, total_fill_order)))+
+  guides(fill = FALSE)+ # hide fill legend
+  scale_fill_manual(values = c("#8EBB90", "#1D734D")) + # set column colors
+  geom_col(position=position_dodge(width=0.9), width = 0.4, stat="identity")+
+  geom_point(aes(x = plot, y = median, shape = ""), position=position_dodge(width=0.9), vjust=-0.3) +
+  scale_shape_manual(values = 4, labels = "Median", name = "") + # set median point to shape 4
+  geom_point(aes(alpha = ""))+
+  scale_alpha_manual(values = 16, labels = "Mean", name = "")+ #create blank point for legend to add shape 16 as mean
+   geom_text(aes(y = (mean+se) , label=round(mean, 0), x = plot), position=position_dodge(width=0.9), vjust = -1)+ # label mean values
+geom_point(data = combined_total_density, aes(x=plot, y= mean),position=position_dodge(width=0.9), color = "black", shape = 16)+ # add a point at the mean
+geom_errorbar(data = combined_total_density,
+              position=position_dodge(width=0.9),
+                aes(x = plot, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.08) + # add SE bars
+  theme_bw()+
+  labs(title = "Average YPMC Tree Density", x = "",subtitle = "Across the Entire Landscape", y = "Trees/Hectare") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  theme(legend.spacing.y = unit(-0.3, "cm"))+ #shorten distance between two legends
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 450))
+```
+
+# Percent change of densities between vtm and fia total tree densities
+```{r}
+pct_change_combined_total_density <- combined_total_density %>%
+  select(plot, mean) %>%
+  mutate(pct_change = ((lag(mean)/mean-1)*100))
+
+# pct_change_combined_total_density$pct_change
+```
+
+# tree density by species (combined)
+```{r}
+# Note:  grouped PIPO and PIJE under "yellow pine"
+# fia_species_densities = FIA data
+# landscape_density_yellowpine = VTM data
+##------------------------------------------------------------------------------------
+
+# add columns to specify data source (vtm or fia)
+fia_species_density_landscape <- fia_species_densities %>% 
+  mutate(type = "fia") %>% 
+  rename("species" = "plot")
+
+vtm_species_density_landscape <- landscape_density_yellowpine %>% 
+  mutate(type = "vtm")
+##------------------------------------------------------------------------------------
+
+# combine vtm and fia data
+combined_species_density_landscape <-fia_species_density_landscape %>% 
+  full_join(vtm_species_density_landscape)
+##------------------------------------------------------------------------------------
+
+# rename tree species
+combined_species_density_landscape$species <- as.character(combined_species_density_landscape$species)
+
+combined_species_density_landscape$species[combined_species_density_landscape$species == "White fir"] <-"ABCO"
+combined_species_density_landscape$species[combined_species_density_landscape$species == "Incense cedar"] <-"CADE"
+combined_species_density_landscape$species[combined_species_density_landscape$species == "Coulter pine"] <-"PICO"
+combined_species_density_landscape$species[combined_species_density_landscape$species == "Sugar pine"] <-"PILA"
+combined_species_density_landscape$species[combined_species_density_landscape$species == "Canyon live oak"] <-"QUCH"
+combined_species_density_landscape$species[combined_species_density_landscape$species == "California black oak"] <-"QUKE"
+combined_species_density_landscape$species[combined_species_density_landscape$species == "Bigcone douglas-fir"] <-"PSMA"
+combined_species_density_landscape$species[combined_species_density_landscape$species == "Yellow pine"] <-"YP"
+##------------------------------------------------------------------------------------
+
+# create a factor order
+species_order <- c("vtm", "fia")
+tree_order <- c("ABCO", "CADE", "PICO", "PILA", "PSMA", "YP", "QUCH", "QUKE")
+##------------------------------------------------------------------------------------
+
+# make graph
+landscape_species_graph <-ggplot(combined_species_density_landscape,aes(x=factor(species, tree_order),y=mean,fill=factor(type, species_order)))+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("Historic (VTM)", "Current (FIA)"), name = "")+
+  geom_col(stat="identity",position=position_dodge(width=0.9))+
+#geom_text(aes(y = (mean+se) , label=round(mean, 0), x = species), position=position_dodge(width=0.9), vjust = -1)+
+geom_point(data = combined_species_density_landscape, aes(x=species, y= mean),position=position_dodge(width=0.9), color = "black", size = 1.3, shape =16)+
+  geom_point(data = combined_species_density_landscape, aes(x = species, y = median), position=position_dodge(width=0.9), vjust=-0.3, shape = 4)+
+geom_errorbar(data = combined_species_density_landscape,
+              position=position_dodge(width=0.9),
+                aes(x = species, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.3) +
+  theme_bw()+
+  labs( x = "Species", y = "Trees/ha") +
+  #theme(plot.title = element_text(hjust= 0.5,
+                                  #face = "bold",
+                                  #margin=margin(0,0,10,0))) +
+  #theme(plot.subtitle = element_text(hjust= 0.5,
+                                  #margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold", size =13,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold", size = 13, 
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(-5, 150))+
+    theme(axis.text.x = element_text(color = "black", size = 9))+
+  theme(legend.text=element_text(size=9))+
+guides(fill = guide_legend(override.aes = list(shape = "")))
+ landscape_species_graph
+# this is the final graph!
+```
+
+# Find percent change for each species density between vtm and fia
+```{r}
+pct_change_combined_species_density <- combined_species_density_landscape %>%
+  select(species, mean, type) %>%
+  group_by(species) %>%
+  mutate(pct_change = ((lag(mean)/mean-1)*100))
+
+# pct_change_combined_species_density$pct_change
+```
+
+# frequency analysis:species (combined): part 1
+```{r,  echo=TRUE, fig.height=6, fig.width=3}
+## graph 1: species frequency analysis (including absences)
+# freq_analysis_full 
+# vtm_freq_analysis_full 
+freq_analysis_full_2 <- freq_analysis_full  %>% 
+  mutate(type = "fia") 
+vtm_freq_analysis_full_2 <- vtm_freq_analysis_full  %>% 
+  mutate(type = "vtm") 
+
+freq_analysis_full_combined <-freq_analysis_full_2 %>% 
+  full_join(vtm_freq_analysis_full_2)
+
+freq_order <- c("vtm", "fia")
+
+comparison_freq_graph_1 <-ggplot(freq_analysis_full_combined, aes(y = proportion, x = total, fill=factor(type, freq_order))) +
+  geom_col(position=position_dodge(width = 0.9), width = 0.9)+
+  theme_bw()+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("VTM", "FIA"), name = "Data source")+
+  labs(title = "Species Frequency Analysis", subtitle = "Comparison", x = "Trees per Plot", y = "Proportion of Total Plots") +
+  facet_wrap(~plot, scales = "free", ncol = 2)+
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0),
+                                  size = 20)) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0), size = 15)) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0),
+                                  size = 15))+
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0), size = 15),
+        strip.text = element_text(size = 12))+
+  scale_y_continuous( expand = c(0,0))
+#comparison_freq_graph_1
+```
+
+# frequency analysis:species (combined): part 2
+```{r,  echo=TRUE, fig.height=6, fig.width=4}
+## graph 2: species frequency analysis (excluding absences)
+#freq_analysis
+#vtm_freq_analysis
+
+freq_analysis_2 <- freq_analysis  %>% 
+  mutate(type = "fia")
+vtm_freq_analysis_2 <- vtm_freq_analysis %>% 
+  mutate(type = "vtm") 
+
+freq_analysis_combined <-freq_analysis_2 %>% 
+  full_join(vtm_freq_analysis_2)
+
+comparison_freq_graph_2 <- ggplot(freq_analysis_combined, aes(y = proportion, x = total, fill=factor(type, freq_order))) +
+  geom_col(position=position_dodge(width = 0.9), width = 0.9)+
+  theme_bw()+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("VTM", "FIA"), name = "Data source")+
+  labs(title = "Species Frequency Analysis (Excluding Absences)", subtitle = "Comparison", x = "Trees per Plot", y = "Proportion of Total Plots") +
+  facet_wrap(~plot, scales = "free", ncol=2)+
+    theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0),
+                                  size = 20)) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0), size = 15)) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0),
+                                  size = 15))+
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0), size = 15),
+        strip.text = element_text(size = 12))+
+  scale_y_continuous( expand = c(0,0))
+#comparison_freq_graph_2
+```
+
+# frequency analysis:species (combined): part 3
+```{r}
+## graph 3: species absence 
+#vtm_freq_analysis_0_percent
+#freq_analysis_0_percent
+
+freq_analysis_0_percent_2 <- freq_analysis_0_percent   %>% 
+  mutate(type = "fia")
+vtm_freq_analysis_0_percent_2 <- vtm_freq_analysis_0_percent  %>% 
+  mutate(type = "vtm")
+
+freq_analysis_0_percent_combined <-freq_analysis_0_percent_2 %>% 
+  full_join(vtm_freq_analysis_0_percent_2)
+
+comparison_freq_graph_3 <- ggplot(freq_analysis_0_percent_combined, aes(y = percentage, x = reorder(plot, -n), fill=factor(type, freq_order))) +
+  geom_col(position=position_dodge(width = 0.9), width = 0.9)+
+  theme_bw()+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("VTM", "FIA"), name = "Data source")+
+  labs(title = "Species Absence", subtitle = "Comparison", x = "Species", y = "Plot Percentage \n (Percentage of Plots Absent of species)") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 110)) +
+  geom_text(position=position_dodge(width = 0.9), aes(label = round(percentage,0), vjust = -0.5))
+#comparison_freq_graph_3 
+## graph 4: species presence
+
+freq_analysis_presence <-freq_analysis_0_percent_combined %>% 
+  mutate(presence_percent = 100-percentage)
+
+comparison_freq_graph_4 <-ggplot(freq_analysis_presence, aes(y = presence_percent, x = reorder(plot, n), fill=factor(type, freq_order))) +
+  geom_col(position=position_dodge(width = 0.9), width = 0.9)+
+  theme_bw()+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("VTM", "FIA"), name = "Data source")+
+  labs(title = "Species Presence", subtitle = "Comparison", x = "Species", y = "Plot Percentage \n (Percentage of Plots Containing species)") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  theme(axis.text.x = element_text(angle = 45, hjust= 1))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 110)) +
+  geom_text(position=position_dodge(width = 0.9), aes(label = round(presence_percent,0), vjust = -0.5))
+#comparison_freq_graph_4
+```
+
+# tree density by family (combined)
+```{r}
+# oak_pine_densities = FIA data
+# pinus_v_quercus = VTM data
+##------------------------------------------------------------------------------------
+
+# add columns to specify data source (vtm or fia) and rename appropriately
+fia_oak_pine_densities_landscape <- oak_pine_densities %>% 
+  mutate(type = "fia")
+
+vtm_oak_pine_densities_landscape <- pinus_v_quercus %>% 
+  mutate(type = "vtm") 
+
+##------------------------------------------------------------------------------------
+
+# combine vtm and fia data
+combined_genus_densities_landscape <-fia_oak_pine_densities_landscape %>% 
+  full_join(vtm_oak_pine_densities_landscape)
+##------------------------------------------------------------------------------------
+
+# create a factor order
+species_order <- c("vtm", "fia")
+##------------------------------------------------------------------------------------
+
+# make graph
+landscape_genus_graph <-ggplot(combined_genus_densities_landscape,aes(x=plot,y=mean,fill=factor(type, species_order)))+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("Historic (VTM)", "Current (FIA)"), name = "")+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+   #geom_text(aes(y = (mean+se) , label=round(mean, 0), x = plot), position=position_dodge(width = 0.4), vjust = -1)+
+geom_point(data = combined_genus_densities_landscape, aes(x=plot, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+  geom_point(data = combined_genus_densities_landscape, aes(x = plot, y = median), position=position_dodge(width=0.4), shape = 4)+
+geom_errorbar(data = combined_genus_densities_landscape,
+              position=position_dodge(width = 0.4),
+                aes(x = plot, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.1) +
+  theme_bw()+
+  labs(y = "Trees/ha", x = "") +
+  #theme(plot.title = element_text(hjust= 0.5,
+                                 # face = "bold",
+                                  #margin=margin(0,0,10,0))) +
+  #theme(plot.subtitle = element_text(hjust= 0.5,
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold", size = 13,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold", size = 13, 
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  theme(legend.text=element_text(size=9))+
+  expand_limits(y = c(-7, 250))+
+    theme(axis.text.x = element_text(color = "black", size = 9))+
+
+  guides(fill = guide_legend(override.aes = list(shape = ""))) +
+  ggsave(here::here("NRV Analysis", "tree_density", "Figures", "landscape_classification_graph.png"),
+          height=5,
+         width=7,
+         units="in")
+ landscape_genus_graph
+# this is the final graph!!
+```
+
+# percent change in density by genus
+```{r}
+pct_change_combined_genus_densities <- combined_genus_densities_landscape %>%
+  select(plot, mean, type) %>%
+  group_by(plot) %>%
+  mutate(pct_change = ((lag(mean)/mean-1)*100))
+
+# pct_change_combined_genus_densities$pct_change
+```
+
+# tree density by shade and fire tolerant/intolerant- with oaks (combined)
+```{r}
+# Shade Tolerant species: ABCO, CADE, QUCH
+# Shade Intolerant species: PIPO, PIJE, PICO, PSMA, PILA, QUKE
+# fia_combined_tolerance
+# combined_tolerance: vtm data
+##------------------------------------------------------------------------------------
+
+# add columns to specify data source (vtm or fia) 
+fia_combined_tolerance_landscape <- fia_combined_tolerance%>% 
+  mutate(type = "fia")
+
+
+vtm_combined_tolerance_landscape <- combined_tolerance %>% 
+  mutate(type = "vtm") 
+##------------------------------------------------------------------------------------
+
+# combine vtm and fia data
+combined_tolerance_landscape <-fia_combined_tolerance_landscape %>% 
+  full_join(vtm_combined_tolerance_landscape)
+##------------------------------------------------------------------------------------
+
+# create a factor order
+species_order <- c("vtm", "fia")
+##------------------------------------------------------------------------------------
+
+# make graph
+landscape_tolerant_graphs <- ggplot(combined_tolerance_landscape,aes(x=plot,y=mean,fill=factor(type, species_order)))+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("Historic (VTM)", "Current (FIA)"), name = "")+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+#geom_text(aes(y = (mean+se) , label=round(mean, 0), x = plot), position=position_dodge(width = 0.4), vjust = -1)+
+geom_point(data = combined_tolerance_landscape, aes(x=plot, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+geom_errorbar(data = combined_tolerance_landscape,
+              position=position_dodge(width = 0.4),
+                aes(x = plot, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.15) +
+  theme_bw()+
+  labs( x = "Shade and Fire Tolerance",  y = "Trees/ha") +
+  #theme(plot.title = element_text(hjust= 0.5,
+                                 # face = "bold",
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",size=13,
+                                     margin=margin(10,0,0,0))) +
+  #theme(plot.subtitle = element_text(hjust= 0.5,
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.y = element_text (face = "bold",size=13,
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+   theme(legend.text=element_text(size=9))+
+  expand_limits(y = c(0, 250))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  guides(fill = guide_legend(override.aes = list(shape = ""))) +
+  ggsave(here::here("NRV Analysis", "tree_density", "Figures", "landscape_tolerance_with_oaks_graph.png"),
+          height=5,
+         width=7,
+         units="in")
+# landscape_tolerant_graphs
+# this is the final graph!!
+```
+# percent change for shade and fire tolerance densities
+```{r}
+pct_change_combined_tolerance_landscape <- combined_tolerance_landscape %>%
+  select(plot, mean, type) %>%
+  group_by(plot) %>%
+  mutate(pct_change = ((lag(mean)/mean-1)*100))
+
+# pct_change_combined_tolerance_landscape$pct_change
+```
+
+# tree density by shade and fire tolerant/intolerant- without oaks (combined)
+```{r}
+# Shade Tolerant species: ABCO, CADE
+# Shade Intolerant species: PIPO, PIJE, PICO, PSMA, PILA
+# fia_combined_tolerance_no_oak:fia data
+# combined_tolerance_no_oak: vtm data
+##------------------------------------------------------------------------------------
+
+# add columns to specify data source (vtm or fia) 
+fia_combined_tolerance_landscape_no_oak <- fia_combined_tolerance_no_oak%>% 
+  mutate(type = "fia")
+
+
+vtm_combined_tolerance_landscape_no_oak <- combined_tolerance_no_oak %>% 
+  mutate(type = "vtm") 
+##------------------------------------------------------------------------------------
+
+# combine vtm and fia data
+combined_tolerance_landscape_no_oak <-fia_combined_tolerance_landscape_no_oak %>% 
+  full_join(vtm_combined_tolerance_landscape_no_oak)
+##------------------------------------------------------------------------------------
+
+# create a factor order
+species_order <- c("vtm", "fia")
+##------------------------------------------------------------------------------------
+
+# make graph
+landscape_tolerant_graphs_no_oak <- ggplot(combined_tolerance_landscape_no_oak,aes(x=plot,y=mean,fill=factor(type, species_order)))+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("Historic (VTM)", "Current (FIA)"), name = "")+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+#geom_text(aes(y = (mean+se) , label=round(mean, 0), x = plot), position=position_dodge(width = 0.4), vjust = -1)+
+geom_point(data = combined_tolerance_landscape_no_oak, aes(x=plot, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape=16)+
+geom_errorbar(data = combined_tolerance_landscape_no_oak,
+              position=position_dodge(width = 0.4),
+                aes(x = plot, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.15) +
+  theme_bw()+
+  labs(x = "Shade and Fire Tolerance", y = "Trees/ha") +
+  #theme(plot.title = element_text(hjust= 0.5,
+                                 # face = "bold",
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold", size=13,
+                                     margin=margin(10,0,0,0))) +
+  #theme(plot.subtitle = element_text(hjust= 0.5,
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.y = element_text (face = "bold",size=13,
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 150))+ 
+  theme(legend.text=element_text(size=9))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  guides(fill = guide_legend(override.aes = list(shape = ""))) +
+  ggsave(here::here("NRV Analysis", "tree_density", "Figures", "landscape_tolerance_with_oaks_graph.png"),
+          height=5,
+         width=7,
+         units="in")
+landscape_tolerant_graphs_no_oak
+
+```
+
+# tree density by national forest (combined)
+# Skip for right now
+
+# tree density by elevation (combined)
+# Skip for right now
+
+### combined total and family densities
+```{r}
+# dataframes to combine
+combined_densities_landscape2<- combined_total_density %>% 
+  mutate("species" = "All YPMC Species") %>% 
+  rename("type" = "plot")
+
+combined_genus_densities_landscape2 <- combined_genus_densities_landscape %>% 
+  rename("species" = "plot")
+combined_genus_densities_landscape2$type <- as.character(combined_genus_densities_landscape2$type)
+combined_genus_densities_landscape2$type[combined_genus_densities_landscape2$type == "fia"] <- "FIA"
+combined_genus_densities_landscape2$type[combined_genus_densities_landscape2$type == "vtm"] <- "VTM"
+##------------------------------------------------------------------------------------
+
+# combine dataframes
+combined_density_breakdown_landscape <-combined_densities_landscape2 %>% 
+  full_join(combined_genus_densities_landscape2)
+
+combined_density_breakdown_landscape$type[combined_density_breakdown_landscape$type == "VTM"] <-"Historic (VTM)"
+combined_density_breakdown_landscape$type[combined_density_breakdown_landscape$type == "FIA"] <-"Current (FIA)"
+##------------------------------------------------------------------------------------
+
+# create a factor order
+combined_order <- c("Conifers", "Oaks", "All YPMC Species")
+type_order <- c("Historic (VTM)", "Current (FIA)")
+##------------------------------------------------------------------------------------
+
+# make graph #1
+landscape_combined_graph_1 <- ggplot(combined_density_breakdown_landscape,aes(x=factor(type, type_order),y=mean,fill=factor(species, combined_order)))+
+  scale_fill_manual(values = c("#DF869C", "#982845","#6D182D" ), labels=c("Conifers", "Oaks", "All YPMC Species"), name = "")+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+  #geom_text(aes(label=round(mean, 0)), position=position_dodge(width = 0.4), vjust=-1.6, size = 4)+
+  geom_point(data = combined_density_breakdown_landscape, aes(x=type, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+geom_errorbar(data = combined_density_breakdown_landscape,
+              position=position_dodge(width = 0.4),
+                aes(x = type, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.15) +
+  theme_bw()+
+  labs( x = "", y = "Trees/ha") +
+  #theme(plot.title = element_text(hjust= 0.5,
+                                 # face = "bold",
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold", size=13,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold", size=13,
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+   theme(legend.text=element_text(size=9))+
+  expand_limits(y = c(0, 400))+
+  #theme(plot.subtitle = element_text(hjust= 0.5,
+                                #  margin=margin(0,0,10,0))) +
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  guides(fill = guide_legend(override.aes = list(shape = ""))) +
+  ggsave(here::here("NRV Analysis", "tree_density", "Figures", "landscape_density_graph_1.png"),
+          height=5,
+         width=7,
+         units="in")
+ landscape_combined_graph_1
+# this is the final graph!!
+##------------------------------------------------------------------------------------
+
+# make graph #2
+# dataset to use:combined_density_breakdown
+newest_order <- c("VTM", "FIA")
+species_factor_new <- c("Total", "Conifers", "Oaks")
+
+combined_density_breakdown_landscape$species[combined_density_breakdown_landscape$species == "All YPMC Species"] <-"Total"
+ 
+landscape_combined_graph_2 <- ggplot(combined_density_breakdown_landscape,aes(x=factor(species, species_factor_new),y=mean,fill=factor(type, newest_order)))+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("Historic (VTM)", "Current (FIA)"), name = "")+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+  #geom_text(aes(label=round(mean, 0)), position=position_dodge(width = 0.4), vjust=-1.6, size = 4)+
+  geom_point(data = combined_density_breakdown_landscape, aes(x=species, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+   geom_point(data = combined_density_breakdown_landscape, aes(x = species, y = median), position=position_dodge(width=0.4), vjust=-0.3, shape = 4) +
+geom_errorbar(data = combined_density_breakdown_landscape,
+              position=position_dodge(width = 0.4),
+                aes(x = species, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.15) +
+  theme_bw()+
+  labs(x = "", y = "Trees/ha") +
+  #theme(plot.title = element_text(hjust= 0.5,
+                                  #face = "bold",
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",size =13,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold", size=13,
+                                     margin=margin(0,10,0,0)))+
+  #theme(plot.subtitle = element_text(hjust= 0.5,
+                                 # margin=margin(0,0,10,0))) +
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(-15, 400))+
+    theme(legend.text=element_text(size=9))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  guides(fill = guide_legend(override.aes = list(shape = ""))) +
+  ggsave(here::here("NRV Analysis", "tree_density", "Figures", "landscape_density_graph_2.png"),
+          height=5,
+         width=7,
+         units="in")
+  
+ landscape_combined_graph_2 
+# this is the final graph!!
+# Leana's Notes: IDK if these graphs are useful? Maybe some sort of percentage graphs would be useful?
+
+##------------------------------------------------------------------------------------
+
+# make graph #3
+# dataset to use:combined_density_breakdown
+newest_order <- c("Historic (VTM)", "Current (FIA)")
+oak_con<-combined_density_breakdown_landscape %>% 
+  filter(species %in% c("Oaks", "Conifers"))
+
+landscape_combined_graph_3 <- ggplot(oak_con,aes(x=species,y=mean,fill=factor(type, newest_order)))+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("Historic (VTM)", "Current (FIA)"), name = "")+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+  #geom_text(aes(label=round(mean, 0)), position=position_dodge(width = 0.4), vjust=-1.6, size = 4)+
+  geom_point(data = oak_con, aes(x=species, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+  geom_point(data = oak_con, aes(x = species, y = median), position=position_dodge(width=0.4), vjust=-0.3, shape = 4)+
+geom_errorbar(data = oak_con,
+              position=position_dodge(width = 0.4),
+                aes(x = species, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.15) +
+  theme_bw()+
+  labs(x = "", y = "Trees/ha") +
+  #theme(plot.title = element_text(hjust= 0.5,
+                                  #face = "bold",
+                                 # margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",size =13,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold", size=13,
+                                     margin=margin(0,10,0,0)))+
+  #theme(plot.subtitle = element_text(hjust= 0.5,
+                                 # margin=margin(0,0,10,0))) +
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(-7, 250))+
+    theme(legend.text=element_text(size=9))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  guides(fill = guide_legend(override.aes = list(shape = ""))) +
+  ggsave(here::here("NRV Analysis", "tree_density", "Figures", "landscape_density_graph_3.png"),
+          height=5,
+         width=7,
+         units="in")
+# landscape_combined_graph_3 
+# this is the final graph!!
+```
+
+# percent change of all other species densities 
+```{r}
+pct_change_combined_density_landscape <- combined_density_breakdown_landscape %>%
+  select(species, mean, type) %>%
+  group_by(species) %>%
+  mutate(pct_change = ((lag(mean)/mean-1)*100))
+
+# pct_change_combined_density_landscape$pct_change
+```
+
+# final graphs
+```{r}
+landscape_species_graph
+landscape_genus_graph
+landscape_tolerant_graphs
+landscape_tolerant_graphs_no_oak
+landscape_combined_graph_1
+landscape_combined_graph_2
+comparison_freq_graph_1 
+comparison_freq_graph_2 
+comparison_freq_graph_3 
+comparison_freq_graph_4
+```
+

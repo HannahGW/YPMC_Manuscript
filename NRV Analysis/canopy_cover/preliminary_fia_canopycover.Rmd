@@ -1,0 +1,1511 @@
+---
+title: "fia_canopycover"
+author: "Hannah Garcia-Wickstrum"
+date: "11/17/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Upload packages
+library(tidyverse)
+library(tidyr)
+library(here)
+```
+
+```{r}
+# read in data & filter for dbh > 4 inches (10.16 cm)
+fia_data <- read_csv(here::here("FIA Data", "Final FIA data and code used for analysis", "final_binded_fia_ypmc_data.csv")) %>%
+  filter(dbh >= 10.16) # I'm assuming we still want to do this step because of VTM lacking this data?
+
+# we also want to merge LPF into LPNF and BDF into SBNF
+fia_data$admin_forest[fia_data$admin_forest == "LPF"] <-"LPNF"
+fia_data$admin_forest[fia_data$admin_forest == "BDF"] <-"SBNF"
+fia_data$admin_forest[fia_data$admin_forest == "Not NF or other NF"] <- "Other"
+```
+
+### Canopy Cover Overview
+## Equations
+
+# 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+# 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+# 4.4.1.4: CW = HT * s1 (HT <4.5' and DBH<DBHT)
+# 4.4.1.5: CW = d1 + d2 * DBH (HT>4.5' and DBH<DBHT)
+
+# CW is maximum tree crown width
+# DBH is tree diameter at breast height
+# DBH(subT) is threshold diamter 
+
+## Table (from...) Coefficients and equation reference for crown width equations {4.4.2.1}-{4.4.2.5} in the WS variant
+
+# Sugar Pine (PILA), Equation 4.4.2.1, DBH(subT) = 7.4
+# White fir (ABCO), Equation 4.4.2.1, DBH(subT) = 5
+# Incense cedar (CADE), Equation 4.4.2.1, DBH(subT) = 5
+# Jeffrey Pine (PIJE), Equation 4.4.2.2, DBH(subT) = 5
+# Ponderosa Pine (PIPO), Equation 4.4.2.2, DBH(subT) = 5
+# Coulter Pine (PICO), Equation 4.4.2.2, DBH(subT) = 5
+# Bigcone Spruce (PSMA), Equation 4.4.2.1, DBH (subT) = 5
+# Canyon Live Oak (QUCH), Equation 4.4.2.1, DBH(subT) = 5 
+# Black Oak (QUKE), Equation 4.4.2.1, DBH(subT) = 5
+
+```{r}
+## Constants for equations 
+# --------------------------------------------------
+# Sugar Pine (PILA) constants:
+pila_d1 <- 3.5
+pila_d2 <- 0.338
+pila_a1 <- -1.476
+pila_a2 <- 1.01
+pila_s1 <- 0.7778
+
+# White fir (ABCO) constants:
+abco_d1 <- 3.26
+abco_d2 <- 1.103
+abco_a1 <- 5.82
+abco_a2 <- 0.591
+abco_s1 <- 0.7778
+
+# Incense Cedar (CADE) constants:
+cade_d1 <- 3.5
+cade_d2 <- 1.192
+cade_a1 <- 7.11
+cade_a2 <- 0.47
+cade_s1 <- 0.7778
+
+# Jeffrey Pine (PIJE) constants: 
+pije_d1 <- 3.5
+pije_d2 <- 0.5754
+pije_a1 <- 1.52
+pije_a2 <- 0.891
+pije_s1 <- 0.7778
+
+# Ponderosa Pine (PIPO) constants:
+pipo_d1 <-3.77
+pipo_d2 <- 0.7756
+pipo_a1 <- 2.24
+pipo_a2 <- 0.763
+pipo_s1 <- 0.7778
+
+# Coulter Pine (PICO) constants:
+pico_d1 <- 3.5
+pico_d2 <- 1.7618
+pico_a1 <- 3.9347
+pico_a2 <- 0.7086
+pico_s1 <- 0.7778
+
+# Bigcone Spruce (PSMA) constants
+psma_d1 <- 3.5
+psma_d2 <- 5.5672
+psma_a1 <- 27.030
+psma_a2 <- 0.8612
+psma_s1 <- 0.7778
+
+# Canyon Live Oak (QUCH) constants:
+quch_d1 <- 2.5
+quch_d2 <- 2.19
+quch_a1 <- 5
+quch_a2 <- 1.69
+quch_s1 <- 0.5556
+
+# Black Oak (QUKE) constants:
+quke_d1 <- 2.5
+quke_d2 <- 2.7
+quke_a1 <- 10
+quke_a2 <- 1.2
+quke_s1 <- 0.5556
+
+pi <- 3.1415926535 
+e <- 2.718281828
+```
+
+```{r}
+## Anne-Marie's midpoints for 36+ dbh
+# vtm_basal_largest <- vtm_tidy %>% 
+#   filter(dbh_class == "dbh_36") %>% 
+#   mutate(dbh_final = case_when(
+
+#     species == "ABCO" ~ 106 + 14,-->47.2
+#     species == "CADE" ~ 162,-->63.8
+#     species == "PICO" ~ 99 + 5,-->40.9
+#     #species == "PIJE" ~ 104 + 12,-->45.7
+#     species == "PILA" ~ 108 + 15,-->48.4
+#     #species == "PIPO" ~ 110 + 18,-->50.4
+#     species == "Yellow Pine" ~ 104 + 13,-->46.1
+#     species == "PSMA" ~ 107 + 13,-->47.2
+#     species == "QUCH" ~ 98 - 6,-->36.2
+#     species == "QUKE" ~ 93-->36.6
+
+# final dbh 36+ class (rounded to the nearest tenth)
+# Yellow pine = 46.1 inches
+# ABCO = 47.2 inches
+# CADE = 63.8 inches 
+# PICO = 40.9 inches
+# PILA = 48.4 inches
+# PSMA = 47.2 inches
+# QUCH = 36.2 inches
+# QUKE = 36.6 inches
+```
+
+
+## FIA Canopy Cover using midpoint of dbh class (same method as VTM)
+
+# PIPO Canopy Cover (using midpoint of dbh bins)
+```{r}
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+# DBH(subT) is 5 and our lowest dbh is 7.5 since we are taking the midpoint of each class. 
+
+# Select only PIPO & select only needed columns
+# DBH for FIA is in centimeters! Still used the same inches midpoint that was used in vtm to be consistent. 
+
+fia_pipo <- fia_data %>%
+  filter(species == "PIPO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "46.1")) 
+
+# change dbh_class to numeric (note, anything greater than 36 dbh won't have a plus or else they would change to NAs when converted to numeric)
+fia_pipo$dbh_class <- as.numeric(fia_pipo$dbh_class)
+# str(fia_pipo)
+fia_pipo <- mutate(fia_pipo, canopy_width = (pipo_a1 * (dbh_class^(pipo_a2))))
+fia_pipo$canopy_width <- as.numeric(fia_pipo$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pipo_canopy <- fia_pipo %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pipo_sum <- fia_pipo_canopy %>%
+  group_by(unique_plot, dbh_class, admin_forest, species)%>%
+  tally(canopy_area) # checked a couple of plots against the fia_pipo dataframe and they added up to the correct amount.
+```
+
+# PIJE Canopy Cover (using midpoint of dbh bins)
+```{r}
+# Equation for PIJE: # 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+fia_pije <- fia_data %>%
+  filter(species == "PIJE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "46.1")) 
+
+fia_pije$dbh_class <- as.numeric(fia_pije$dbh_class)
+fia_pije <- mutate(fia_pije, canopy_width = (pije_a1 * (dbh_class^(pije_a2))))
+fia_pije$canopy_width <- as.numeric(fia_pije$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pije_canopy <- fia_pije %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pije_sum <- fia_pije_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# PILA Canopy Cover (using midpoint of dbh class)
+```{r}
+# Use Equation: # 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_pila <- fia_data %>%
+  filter(species == "PILA") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "48.4")) 
+
+fia_pila$dbh_class <- as.numeric(fia_pila$dbh_class)
+fia_pila <- mutate(fia_pila, canopy_width = (pila_a1 + pila_a2 * (dbh_class))) 
+fia_pila$canopy_width <- as.numeric(fia_pila$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pila_canopy <- fia_pila %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pila_sum <- fia_pila_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# PICO Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+fia_pico <- fia_data %>%
+  filter(species == "PICO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "40.9")) 
+
+fia_pico$dbh_class <- as.numeric(fia_pico$dbh_class)
+fia_pico <- mutate(fia_pico, canopy_width = (pico_a1 * (dbh_class^(pico_a2))))
+fia_pico$canopy_width <- as.numeric(fia_pico$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pico_canopy <- fia_pico %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pico_sum <- fia_pico_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# ABCO Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_abco <- fia_data %>%
+  filter(species == "ABCO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "47.2")) 
+
+fia_abco$dbh_class <- as.numeric(fia_abco$dbh_class)
+fia_abco <- mutate(fia_abco, canopy_width = (abco_a1 + abco_a2 * (dbh_class)))
+fia_abco$canopy_width <- as.numeric(fia_abco$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_abco_canopy <- fia_abco %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_abco_sum <- fia_abco_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# CADE Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_cade <- fia_data %>%
+  filter(species == "CADE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "63.8")) 
+
+fia_cade$dbh_class <- as.numeric(fia_cade$dbh_class)
+fia_cade <- mutate(fia_cade, canopy_width = (cade_a1 + cade_a2 * (dbh_class)))
+fia_cade$canopy_width <- as.numeric(fia_cade$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_cade_canopy <- fia_cade %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_cade_sum <- fia_cade_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# PSMA Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_psma <- fia_data %>%
+  filter(species == "PSMA") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "47.2")) 
+
+fia_psma$dbh_class <- as.numeric(fia_psma$dbh_class)
+fia_psma <- mutate(fia_psma, canopy_width = (psma_a1 + psma_a2 * (dbh_class)))
+fia_psma$canopy_width <- as.numeric(fia_psma$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_psma_canopy <- fia_psma %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_psma_sum <- fia_psma_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# QUCH Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation  4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_quch <- fia_data %>%
+  filter(species == "QUCH") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36.2")) 
+
+fia_quch$dbh_class <- as.numeric(fia_quch$dbh_class)
+fia_quch <- mutate(fia_quch, canopy_width = (quch_a1 + quch_a2 * (dbh_class)))
+fia_quch$canopy_width <- as.numeric(fia_quch$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_quch_canopy <- fia_quch %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_quch_sum <- fia_quch_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# QUKE Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_quke <- fia_data %>%
+  filter(species == "QUKE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36.6")) 
+
+fia_quke$dbh_class <- as.numeric(fia_quke$dbh_class)
+fia_quke <- mutate(fia_quke, canopy_width = (quke_a1 + quke_a2 * (dbh_class)))
+fia_quke$canopy_width <- as.numeric(fia_quke$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_quke_canopy <- fia_quke %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_quke_sum <- fia_quke_canopy %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# Combine all dataframes to calculate relative canopy cover
+```{r}
+# combine all species dataframes back together so we can sum the species in plots
+fia_total_canopy <- do.call("rbind", list(fia_abco_sum,
+                                          fia_cade_sum,
+                                          fia_pico_sum,
+                                          fia_pije_sum,
+                                          fia_pila_sum,
+                                          fia_pipo_sum,
+                                          fia_psma_sum,
+                                          fia_quch_sum,
+                                          fia_quke_sum))
+
+## -------------------------------------------------------------------------------------------------
+# Next we can sum the total canopy cover of all trees from all size classes PER PLOT
+fia_total_canopy_plot <- fia_total_canopy %>% 
+  group_by(unique_plot, admin_forest) %>% 
+  tally(n) %>% 
+  rename("total_canopy_area" = "n" )
+
+## ------------------------------------------------------------------------------------------------
+# right now the total_canopy_area column is in ft^2, we want to convert this to m^2. 
+# 1 ft^2 = 0.092903 m^2
+
+# create a column that converts squared feet to squared meters
+fia_total_canopy_plot <- fia_total_canopy_plot %>% 
+  mutate(total_canopy_area_meters = (total_canopy_area *0.092903))
+
+# Divide the total canopy area per plot (measured in m^2) by the size of the plot (also measured in m^2). Note: A vtm plot is 672.45 m^2. Then multiply by 100 to obtain a percent canopy cover. 
+fia_total_canopy_plot <- fia_total_canopy_plot %>% 
+  mutate(percent_canopy_cover = ((total_canopy_area_meters/672.45) * 100))
+
+# note that some of the percent covers are above 100%, because we have not yet accounted for overlapping canopies. 
+# we have now determined the percent canopy cover without accounting for overlap--> equivalent to equation 1 in Crookston and Stage 1999 (https://www.fs.fed.us/rm/pubs/rmrs_gtr024.pdf).
+```
+
+# Now apply equation 2 from Crookston and Stage 1999 to account for overlapping canopies. 
+```{r}
+# Equation 2 (page 2 of https://www.fs.fed.us/rm/pubs/rmrs_gtr024.pdf):
+# C = 100 [1 – exp ( – .01 C′ )]
+# C = percent canopy cover that accounts for overlap,
+# C′ = equation 1-percent canopy cover without accounting for overlap. *This has been calculated in the section above. 
+# exp = e^
+
+fia_total_canopy_plot <- fia_total_canopy_plot %>% 
+  mutate(percent_canopy_cover_nonoverlap = (100*(1-(e^(-.01*percent_canopy_cover)))))
+# I THINK it's okay to do this step here (after I've summed the canopy cover per plot), but I can go back and check if applying this equation earlier on changes our results. 
+```
+
+# Summarize Findings
+```{r}
+# with canopy overlap
+# average percent canopy cover across all YPMC plots when allowing for canopy overlap
+mean(fia_total_canopy_plot$percent_canopy_cover)
+# 167.2744
+
+canopy_cover_overlap <- fia_total_canopy_plot %>% 
+  mutate (admin_forest = "All Plots") %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover),
+    sd = sd(percent_canopy_cover),
+    sample_size = n(),
+    se = sd(percent_canopy_cover)/sqrt(n()),
+    var = var(percent_canopy_cover))
+
+canopy_cover_overlap_forests <- fia_total_canopy_plot %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover),
+    sd = sd(percent_canopy_cover),
+    sample_size = n(),
+    se = sd(percent_canopy_cover)/sqrt(n()),
+    var = var(percent_canopy_cover))
+
+canopy_cover_overlap_summary <- do.call("rbind", list(canopy_cover_overlap,
+                                          canopy_cover_overlap_forests))
+
+## -----------------------------------------------------------------------------------------------
+# without canopy overlap
+# average percent canopy cover across all YPMC plots when removing for canopy overlap
+mean(fia_total_canopy_plot$percent_canopy_cover_nonoverlap)
+# 69.93036
+
+canopy_cover_nonoverlap <- fia_total_canopy_plot %>% 
+  mutate (admin_forest = "All Plots") %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover_nonoverlap),
+    sd = sd(percent_canopy_cover_nonoverlap),
+    sample_size = n(),
+    se = sd(percent_canopy_cover_nonoverlap)/sqrt(n()),
+    var = var(percent_canopy_cover_nonoverlap))
+
+canopy_cover_nonoverlap_forests <- fia_total_canopy_plot %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover_nonoverlap),
+    sd = sd(percent_canopy_cover_nonoverlap),
+    sample_size = n(),
+    se = sd(percent_canopy_cover_nonoverlap)/sqrt(n()),
+    var = var(percent_canopy_cover_nonoverlap))
+
+canopy_cover_nonoverlap_summary <- do.call("rbind", list(canopy_cover_nonoverlap,
+                                          canopy_cover_nonoverlap_forests))
+```
+
+# Make Graph - Hannah need to fix. Ask for Leana's help...
+```{r}
+canopy_cover_nonoverlap_summary_rm_NA <-canopy_cover_nonoverlap_summary %>% 
+  mutate(color = case_when(admin_forest == "All Plots" ~ "1",
+                           admin_forest == "ANF" ~ "0",
+                           admin_forest == "CNF" ~ "0",
+                           admin_forest == "LPNF" ~ "0",
+                           admin_forest == "SBNF" ~ "0",
+                           admin_forest == "Other" ~ "0",
+                           TRUE ~ "none"))
+
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "anf"] <-"ANF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "cnf"] <-"CNF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "lpnf"] <-"LPNF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "sbnf"] <-"SBNF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "N/A"] <-"Other"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "All Plots"] <-"All YPMC"
+
+# make factors
+x_factor <- c("ANF", "CNF", "LPNF", "SBNF","Other", "All Plots")
+color_factor <- c("0", "1")
+
+ ggplot(canopy_cover_nonoverlap_summary_rm_NA,aes(x=factor(admin_forest, x_factor),y=mean, fill=factor(color, color_factor)))+
+   scale_fill_manual(values = c("#636161", "#A00D35"))+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+  geom_point(data = canopy_cover_nonoverlap_summary_rm_NA, aes(x=admin_forest, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+geom_errorbar(data = canopy_cover_nonoverlap_summary_rm_NA,
+              position=position_dodge(width = 0.4),
+                aes(x = admin_forest, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.08) +
+  theme_bw()+
+  labs(title = "Average Percent Canopy Cover of YPMC", x = "Location", y = "Percent Canopy Cover") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 90))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  theme(legend.position = "none") 
+```
+
+## ------------------------------------------------------------------------------
+
+## FIA Canopy Cover using actual dbh measurement 
+## FIA height column is in meters
+```{r}
+# convert height column from meters to ft for the equations
+fia_data <- read_csv(here::here("FIA Data", "Final FIA data and code used for analysis", "final_binded_fia_ypmc_data.csv")) %>%
+  filter(dbh >= 10.16) %>%
+  mutate(ht_ft = ht * 3.28084)
+
+fia_data$admin_forest[fia_data$admin_forest == "LPF"] <-"LPNF"
+fia_data$admin_forest[fia_data$admin_forest == "BDF"] <-"SBNF"
+fia_data$admin_forest[fia_data$admin_forest == "Not NF or other NF"] <- "Other"
+```
+
+
+# PIPO Canopy cover (final dataframe = fia_pipo_two_sum) -- done
+```{r}
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT) DBH(subT) = 5
+fia_pipo_two <- fia_data %>%
+  filter(species == "PIPO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54)) 
+
+# check to see if any under 5 (which is the threshold)
+# fia_pipo_two_check <- fia_pipo_two %>%
+#   filter(dbh_in < 5) # none under 5, which means we can use the above equation
+
+fia_pipo_two$dbh_in <- as.numeric(fia_pipo_two$dbh_in )
+# calculate canopy cover
+fia_pipo_two <- mutate(fia_pipo_two, canopy_width = (pipo_a1 * (dbh_in^(pipo_a2))))
+fia_pipo_two$canopy_width <- as.numeric(fia_pipo_two$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pipo_two_canopy <- fia_pipo_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pipo_two_sum <- fia_pipo_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+
+# comments: since we are not lumping size classes, wonder if this last step even makes sense? whatever, it doesnt hurt.
+```
+
+# PIJE Canopy Cover (final dataframe = fia_pije_two_sum) -- done
+```{r}
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT) DBH(subT) = 5
+fia_pije_two <- fia_data %>%
+  filter(species == "PIJE") %>%
+  select(unique_plot, dbh, ht_ft,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54)) 
+
+# check to see if any under 5 (which is threshhold)
+fia_pije_two_check <- fia_pije_two %>%
+  filter(dbh_in < 4.9) # yes, there are 9 observations under 5
+
+fia_pije_two$dbh_in <- as.numeric(fia_pije_two$dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh larger or equal to 5
+fia_pije_greater_than5 <- fia_pije_two %>%
+  filter(dbh_in >= 4.9) %>%
+  mutate(canopy_width = pije_a1 * (dbh_in^pije_a2))
+
+## -------------------------------------------------------------------------------------------------
+# 4.4.1.5: CW = d1 + d2 * DBH (HT>4.5' and DBH<DBHT) 
+# all 9 observations taller than 4.5 but less than 5 dbh
+
+fia_pije_less_than5_tall <- fia_pije_two_check %>%
+  filter(dbh_in < 4.9) %>%
+  mutate(canopy_width = pije_d1 + pije_d2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# combine two dataframes
+pije_total_two <- do.call("rbind", list(fia_pije_greater_than5,
+                                        fia_pije_less_than5_tall))
+
+## -------------------------------------------------------------------------------------------------
+fia_pije_two_canopy <- pije_total_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pije_two_sum <- fia_pije_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+```
+
+# PILA Canopy Cover (final dataframe = fia_pila_two_sum) -- done
+```{r}
+# Use Equation: # 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT), DBH(subT) = 7.4
+fia_pila_two <- fia_data %>%
+  filter(species == "PILA") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54))
+
+fia_pila_two_check <- fia_pila_two %>%
+  filter(dbh_in < 7.4) # 21 trees under the threshold value, no trees under 4.5' in height
+
+fia_pila_two$dbh_in <- as.numeric(fia_pila_two$dbh_in)
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh larger or equal to 7.4
+fia_pila_greater_than7 <- fia_pila_two %>%
+  filter(dbh_in >= 7.4) %>%
+  mutate(canopy_width = pila_a1 + pila_a2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh less than 7.4 but taller than 4.5 inches
+# 4.4.1.5: CW = d1 + d2 * DBH (HT>4.5' and DBH<DBHT)
+fia_pila_less_than7 <- fia_pila_two %>%
+  filter(dbh_in < 7.4) %>%
+  mutate(canopy_width = pila_d1 + pila_d2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# Combine two dataframes
+pila_total_two <- do.call("rbind", list(fia_pila_greater_than7,
+                                        fia_pila_less_than7))
+
+## -------------------------------------------------------------------------------------------------
+fia_pila_two_canopy <- pila_total_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pila_two_sum <- fia_pila_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+```
+
+# PICO Canopy Cover (final dataframe = fia_pico_two_sum) -- done
+```{r}
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT), DBH(subT) = 5
+fia_pico_two <- fia_data %>%
+  filter(species == "PICO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54))
+
+fia_pico_two_check <- fia_pico_two %>%
+  filter(dbh_in < 4.9) # only one tree under the threshold dbh and is taller than 4.5 ft
+
+fia_pico_two$dbh_in <- as.numeric(fia_pico_two$dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh larger or equal to 5
+fia_pico_greater_than5 <- fia_pico_two %>%
+  filter(dbh_in >= 4.9) %>%
+  mutate(canopy_width = pico_a1 * (dbh_in^pico_a2))
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh less than 5, ht greater than 4.5 in
+# 4.4.1.5: CW = d1 + d2 * DBH (HT>4.5' and DBH<DBHT)
+fia_pico_less_than5 <- fia_pico_two %>%
+  filter(dbh_in < 5) %>%
+   mutate(canopy_width = pico_d1 + pico_d2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# combine the two dataframes
+pico_total_two <- do.call("rbind", list(fia_pico_less_than5,
+                                        fia_pico_greater_than5))
+
+## -------------------------------------------------------------------------------------------------
+fia_pico_two_canopy <- pico_total_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# Sum across size classes
+fia_pico_two_sum <- fia_pico_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+
+```
+
+# ABCO Canopy Cover (final dataframe = fia_abco_two_sum) -- done
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT), DBH(subT) = 5
+fia_abco_two <- fia_data %>%
+  filter(species == "ABCO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54))
+
+fia_abco_two_check <- fia_abco_two %>%
+  filter(dbh_in < 4.9) # 8 trees with dbh under the threshold level and 5 under 4.5 ft
+
+fia_abco_two$dbh_in <- as.numeric(fia_abco_two$dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh larger or equal to 5
+fia_abco_greater_than5 <- fia_abco_two %>%
+  filter(dbh_in >= 4.9) %>%
+  mutate(canopy_width = abco_a1 + abco_a2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh less than 5, with a height greather than 4.5
+# 4.4.1.5: CW = d1 + d2 * DBH (HT>4.5' and DBH<DBHT)
+fia_abco_less_than5_tall <- fia_abco_two_check %>%
+  filter(ht > 4.5) %>%
+  mutate(canopy_width = abco_d1 + abco_d2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh less than 5, with a height less than 4.5
+## 4.4.1.4: CW = HT * s1 (HT <4.5' and DBH<DBHT)
+fia_abco_less_than5_short <- fia_abco_two_check %>%
+  filter(ht < 4.5) %>%
+  mutate(canopy_width = ht * abco_s1)
+
+## -------------------------------------------------------------------------------------------------
+# combine the three dataframes
+abco_total_two <- do.call("rbind", list(fia_abco_less_than5_short,
+                                        fia_abco_less_than5_tall,
+                                        fia_abco_greater_than5))
+
+## -------------------------------------------------------------------------------------------------
+fia_abco_two_canopy <- abco_total_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# Sum across size classes
+fia_abco_two_sum <- fia_abco_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+```
+
+# CADE Canopy Cover (final dataframe = fia_cade_two_sum) -- done
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT), DBH(subT) = 5
+fia_cade_two <- fia_data %>%
+  filter(species == "CADE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54))
+
+fia_cade_two_check <- fia_cade_two %>%
+  filter(dbh_in < 4.9) # No trees under the threshold dbh WOO
+
+fia_cade_two$dbh_in <- as.numeric(fia_cade_two$dbh_in)
+fia_cade_two <- mutate(fia_cade_two, canopy_width = (cade_a1 + cade_a2 * (dbh_in)))
+fia_cade_two$canopy_width <- as.numeric(fia_cade_two$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_cade_two_canopy <- fia_cade_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# Sum across size classes
+fia_cade_two_sum <- fia_cade_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+```
+
+# PSMA Canopy Cover (final dataframe = fia_psma_two_sum) -- done
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT), DBH (subT) = 5
+fia_psma_two <- fia_data %>%
+  filter(species == "PSMA") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54))
+
+fia_psma_two_check <- fia_psma_two %>%
+  filter(dbh_in < 4.9) # No trees under threshold :)
+
+fia_psma_two$dbh_in <- as.numeric(fia_psma_two$dbh_in)
+fia_psma_two <- mutate(fia_psma_two, canopy_width = (psma_a1 + psma_a2 * (dbh_in)))
+fia_psma_two$canopy_width <- as.numeric(fia_psma_two$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_psma_two_canopy <- fia_psma_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# Sum across size classes
+fia_psma_two_sum <- fia_psma_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+```
+
+# QUCH Canopy Cover (final dataframe = fia_quch_two_sum) -- done
+```{r}
+# Use Equation  4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT), DBH(subT) = 5 
+fia_quch_two <- fia_data %>%
+  filter(species == "QUCH") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54))
+
+fia_quch_two_check <- fia_quch_two %>%
+   filter(dbh_in < 4.9) # 44 under the threshold
+
+fia_quch_two$dbh_in <- as.numeric(fia_quch_two$dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for all trees with dbh larger or equal to 5
+fia_quch_greater_than5 <- fia_quch_two %>%
+  filter(dbh_in > 4.9) %>%
+  mutate(canopy_width = quch_a1 + quch_a2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh less than 5 but taller than 4.5 (21 trees)
+# 4.4.1.5: CW = d1 + d2 * DBH (HT>4.5' and DBH<DBHT)
+fia_quch_less_than5_tall <- fia_quch_two_check %>%
+  filter(ht > 4.5) %>%
+  mutate(canopy_width = quch_d1 + quch_d2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for trees with dbh less than 5 but shorter than 4.5 (23 trees)
+# 4.4.1.4: CW = HT * s1 (HT <4.5' and DBH<DBHT)
+fia_quch_less_than5_short <- fia_quch_two_check %>%
+  filter(ht < 4.5) %>%
+  mutate(canopy_width = ht * quch_s1)
+
+## -------------------------------------------------------------------------------------------------
+# combine the three dataframes
+quch_total_two <- do.call("rbind", list(fia_quch_greater_than5,
+                                       fia_quch_less_than5_tall,
+                                       fia_quch_less_than5_short))
+
+## -------------------------------------------------------------------------------------------------
+fia_quch_two_canopy <- quch_total_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# Sum across size classes
+fia_quch_two_sum <- fia_quch_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+```
+
+# QUKE Canopy Cover (final dataframe = fia_quke_two_sum) -- done
+```{r}
+# Use Equation  4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT), DBH(subT) = 5
+fia_quke_two <- fia_data %>%
+  filter(species == "QUKE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_in = dbh * (1/2.54))
+
+fia_quke_two_check <- fia_quke_two %>%
+   filter(dbh_in < 4.9) # 1 tree under threshold
+
+fia_quke_two$dbh_in <- as.numeric(fia_quke_two$dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for all trees over dbh of 5
+fia_quke_greater_than5 <- fia_quke_two %>%
+  filter(dbh_in > 4.9) %>%
+  mutate(canopy_width = quke_a1 + quke_a2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# canopy cover for all trees with dbh less than 5, ht greater than 4.5 (1 tree)
+# 4.4.1.5: CW = d1 + d2 * DBH (HT>4.5' and DBH<DBHT)
+fia_quke_less_than5 <- fia_quke_two_check %>%
+  mutate(canopy_width = quke_d1 + quke_d2 * dbh_in)
+
+## -------------------------------------------------------------------------------------------------
+# combine all dataframes
+quke_total_two <- do.call("rbind", list(fia_quke_greater_than5,
+                                        fia_quke_less_than5))
+
+## -------------------------------------------------------------------------------------------------
+fia_quke_two_canopy <- quke_total_two %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes
+fia_quke_two_sum <- fia_quke_two_canopy %>%
+  group_by(unique_plot, dbh_in, admin_forest, species) %>%
+  tally(canopy_area)
+```
+
+# combine all the dataframes from method 2 (no binned dbh)
+```{r}
+fia_total_canopy_two <- do.call("rbind", list(fia_quke_two_sum,
+                                              fia_quch_two_sum,
+                                              fia_psma_two_sum,
+                                              fia_cade_two_sum,
+                                              fia_abco_two_sum,
+                                              fia_pico_two_sum,
+                                              fia_pila_two_sum,
+                                              fia_pije_two_sum,
+                                              fia_pipo_two_sum))
+
+## ------------------------------------------------------------------------------------------------
+# Next we can sum the total canopy cover of all trees from all size classes PER PLOT
+fia_total_canopy_plot_two <- fia_total_canopy_two %>% 
+  group_by(unique_plot, admin_forest) %>% 
+  tally(n) %>% 
+  rename("total_canopy_area" = "n" )
+
+## ------------------------------------------------------------------------------------------------
+# right now the total_canopy_area column is in ft^2, we want to convert this to m^2. 
+# 1 ft^2 = 0.092903 m^2
+
+# create a column that converts squared feet to squared meters
+fia_total_canopy_plot_two <- fia_total_canopy_plot_two %>% 
+  mutate(total_canopy_area_meters = (total_canopy_area *0.092903))
+
+# Divide the total canopy area per plot (measured in m^2) by the size of the plot (also measured in m^2). Note: A vtm plot is 672.45 m^2. Then multiply by 100 to obtain a percent canopy cover. 
+fia_total_canopy_plot_two <- fia_total_canopy_plot_two %>% 
+  mutate(percent_canopy_cover = ((total_canopy_area_meters/672.45) * 100))
+# note that some of the percent covers are above 100%, because we have not yet accounted for overlapping canopies. 
+# we have now determined the percent canopy cover without accounting for overlap--> equivalent to equation 1 in Crookston and Stage 1999 (https://www.fs.fed.us/rm/pubs/rmrs_gtr024.pdf).
+```
+
+# Now apply equation 2 from Crookston and Stage 1999 to account for overlapping canopies. 
+```{r}
+# Equation 2 (page 2 of https://www.fs.fed.us/rm/pubs/rmrs_gtr024.pdf):
+# C = 100 [1 – exp ( – .01 C′ )]
+# C = percent canopy cover that accounts for overlap,
+# C′ = equation 1-percent canopy cover without accounting for overlap. *This has been calculated in the section above. 
+# exp = e^
+
+fia_total_canopy_plot_two <- fia_total_canopy_plot_two %>% 
+  mutate(percent_canopy_cover_nonoverlap = (100*(1-(e^(-.01*percent_canopy_cover)))))
+# I THINK it's okay to do this step here (after I've summed the canopy cover per plot), but I can go back and check if applying this equation earlier on changes our results. 
+```
+
+# Summarize Findings
+```{r}
+# with canopy overlap
+# average percent canopy cover across all YPMC plots when allowing for canopy overlap
+mean(fia_total_canopy_plot_two$percent_canopy_cover)
+# 155.6348
+
+canopy_cover_overlap_two <- fia_total_canopy_plot_two %>% 
+  mutate (admin_forest = "All Plots") %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover),
+    sd = sd(percent_canopy_cover),
+    sample_size = n(),
+    se = sd(percent_canopy_cover)/sqrt(n()),
+    var = var(percent_canopy_cover))
+
+canopy_cover_overlap_forests_two <- fia_total_canopy_plot_two %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover),
+    sd = sd(percent_canopy_cover),
+    sample_size = n(),
+    se = sd(percent_canopy_cover)/sqrt(n()),
+    var = var(percent_canopy_cover))
+
+canopy_cover_overlap_summary_two <- do.call("rbind", list(canopy_cover_overlap_two,
+                                          canopy_cover_overlap_forests_two))
+
+## -----------------------------------------------------------------------------------------------
+# without canopy overlap
+# average percent canopy cover across all YPMC plots when removing for canopy overlap
+mean(fia_total_canopy_plot_two$percent_canopy_cover_nonoverlap)
+# 67.8215
+
+canopy_cover_nonoverlap_two <- fia_total_canopy_plot_two %>% 
+  mutate (admin_forest = "All Plots") %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover_nonoverlap),
+    sd = sd(percent_canopy_cover_nonoverlap),
+    sample_size = n(),
+    se = sd(percent_canopy_cover_nonoverlap)/sqrt(n()),
+    var = var(percent_canopy_cover_nonoverlap))
+
+canopy_cover_nonoverlap_forests_two <- fia_total_canopy_plot_two %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover_nonoverlap),
+    sd = sd(percent_canopy_cover_nonoverlap),
+    sample_size = n(),
+    se = sd(percent_canopy_cover_nonoverlap)/sqrt(n()),
+    var = var(percent_canopy_cover_nonoverlap))
+
+canopy_cover_nonoverlap_summary_two <- do.call("rbind", list(canopy_cover_nonoverlap_two,
+                                          canopy_cover_nonoverlap_forests_two))
+```
+
+# Make Graphs
+```{r}
+# create final dataframe for graph
+canopy_cover_nonoverlap_summary_rm_NA_two <-canopy_cover_nonoverlap_summary_two %>% 
+  mutate(color = case_when(admin_forest == "All Plots" ~ "1",
+                           admin_forest == "ANF" ~ "0",
+                           admin_forest == "CNF" ~ "0",
+                           admin_forest == "LPNF" ~ "0",
+                           admin_forest == "SBNF" ~ "0",
+                           admin_forest == "Other" ~ "0",
+                           TRUE ~ "none"))
+# canopy_cover_nonoverlap_summary_rm_NA$national_forest_name[canopy_cover_nonoverlap_summary_rm_NA$national_forest_name == "anf"] <-"ANF"
+# canopy_cover_nonoverlap_summary_rm_NA$national_forest_name[canopy_cover_nonoverlap_summary_rm_NA$national_forest_name == "cnf"] <-"CNF"
+# canopy_cover_nonoverlap_summary_rm_NA$national_forest_name[canopy_cover_nonoverlap_summary_rm_NA$national_forest_name == "lpnf"] <-"LPNF"
+# canopy_cover_nonoverlap_summary_rm_NA$national_forest_name[canopy_cover_nonoverlap_summary_rm_NA$national_forest_name == "sbnf"] <-"SBNF"
+# canopy_cover_nonoverlap_summary_rm_NA$national_forest_name[canopy_cover_nonoverlap_summary_rm_NA$national_forest_name == "N/A"] <-"Other"
+# canopy_cover_nonoverlap_summary_rm_NA$national_forest_name[canopy_cover_nonoverlap_summary_rm_NA$national_forest_name == "All Plots"] <-"All YPMC"
+
+# make factors
+x_factor <- c("ANF", "CNF", "LPNF", "SBNF","Other", "All Plots")
+color_factor <- c("0", "1")
+
+ ggplot(canopy_cover_nonoverlap_summary_rm_NA_two,aes(x=factor(admin_forest, x_factor),y=mean, fill=factor(color, color_factor)))+
+   scale_fill_manual(values = c("#636161", "#A00D35"))+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+  geom_point(data = canopy_cover_nonoverlap_summary_rm_NA_two, aes(x=admin_forest, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+geom_errorbar(data = canopy_cover_nonoverlap_summary_rm_NA_two,
+              position=position_dodge(width = 0.4),
+                aes(x = admin_forest, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.08) +
+  theme_bw()+
+  labs(title = "Average Percent Canopy Cover of YPMC", subtitle = "Using acutal dbh measurements", x = "Location", y = "Percent Canopy Cover") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 90))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  theme(legend.position = "none")
+```
+
+
+## ------------------------------------------------------------
+# (Haven't done this part yet - hgw)
+### Determine whether or not to use binned dbh size classes or unbinned
+```{r}
+# the two final dataframes are:
+# fia_total_canopy_plot_two -OR- ??
+  ## which uses the unbinned dbh to measure canopy cover &
+# fia_total_canopy_plot -OR- ?? 
+  ## which uses binned dbh size classes to measure canopy cover
+
+# Need to compare between the two..
+```
+
+## -------------------------------------------------------
+## FIA Canopy Cover using 36 midpoint for 36+ size class WITH Oaks
+
+# PIPO Canopy Cover (using midpoint of dbh bins)
+```{r}
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+# DBH(subT) is 5 and our lowest dbh is 7.5 since we are taking the midpoint of each class. 
+
+# Select only PIPO & select only needed columns
+# DBH for FIA is in centimeters! Still used the same inches midpoint that was used in vtm to be consistent. 
+
+fia_pipo_36 <- fia_data %>%
+  filter(species == "PIPO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+# change dbh_class to numeric (note, anything greater than 36 dbh won't have a plus or else they would change to NAs when converted to numeric)
+fia_pipo_36$dbh_class <- as.numeric(fia_pipo_36$dbh_class)
+# str(fia_pipo)
+fia_pipo_36 <- mutate(fia_pipo_36, canopy_width = (pipo_a1 * (dbh_class^(pipo_a2))))
+fia_pipo_36$canopy_width <- as.numeric(fia_pipo_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pipo_canopy_36 <- fia_pipo_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pipo_sum_36 <- fia_pipo_canopy_36 %>%
+  group_by(unique_plot, dbh_class, admin_forest, species)%>%
+  tally(canopy_area) 
+```
+
+# PIJE Canopy Cover (using midpoint of dbh bins)
+```{r}
+# Equation for PIJE: # 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+fia_pije_36 <- fia_data %>%
+  filter(species == "PIJE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_pije_36$dbh_class <- as.numeric(fia_pije_36$dbh_class)
+fia_pije_36 <- mutate(fia_pije_36, canopy_width = (pije_a1 * (dbh_class^(pije_a2))))
+fia_pije_36$canopy_width <- as.numeric(fia_pije_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pije_canopy_36 <- fia_pije_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pije_sum_36 <- fia_pije_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# PILA Canopy Cover (using midpoint of dbh class)
+```{r}
+# Use Equation: # 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_pila_36 <- fia_data %>%
+  filter(species == "PILA") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_pila_36$dbh_class <- as.numeric(fia_pila_36$dbh_class)
+fia_pila_36 <- mutate(fia_pila_36, canopy_width = (pila_a1 + pila_a2 * (dbh_class))) 
+fia_pila_36$canopy_width <- as.numeric(fia_pila_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pila_canopy_36 <- fia_pila_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pila_sum_36 <- fia_pila_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# PICO Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.2: CW = a1 * DBH^a2 (DBH>=DBHT)
+fia_pico_36 <- fia_data %>%
+  filter(species == "PICO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_pico_36$dbh_class <- as.numeric(fia_pico_36$dbh_class)
+fia_pico_36 <- mutate(fia_pico_36, canopy_width = (pico_a1 * (dbh_class^(pico_a2))))
+fia_pico_36$canopy_width <- as.numeric(fia_pico_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_pico_canopy_36 <- fia_pico_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_pico_sum_36 <- fia_pico_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# ABCO Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_abco_36 <- fia_data %>%
+  filter(species == "ABCO") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_abco_36$dbh_class <- as.numeric(fia_abco_36$dbh_class)
+fia_abco_36 <- mutate(fia_abco_36, canopy_width = (abco_a1 + abco_a2 * (dbh_class)))
+fia_abco_36$canopy_width <- as.numeric(fia_abco_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_abco_canopy_36 <- fia_abco_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_abco_sum_36 <- fia_abco_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# CADE Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_cade_36 <- fia_data %>%
+  filter(species == "CADE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_cade_36$dbh_class <- as.numeric(fia_cade_36$dbh_class)
+fia_cade_36 <- mutate(fia_cade_36, canopy_width = (cade_a1 + cade_a2 * (dbh_class)))
+fia_cade_36$canopy_width <- as.numeric(fia_cade_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_cade_canopy_36 <- fia_cade_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_cade_sum_36 <- fia_cade_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# PSMA Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_psma_36 <- fia_data %>%
+  filter(species == "PSMA") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_psma_36$dbh_class <- as.numeric(fia_psma_36$dbh_class)
+fia_psma_36 <- mutate(fia_psma_36, canopy_width = (psma_a1 + psma_a2 * (dbh_class)))
+fia_psma_36$canopy_width <- as.numeric(fia_psma_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_psma_canopy_36 <- fia_psma_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_psma_sum_36 <- fia_psma_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# QUCH Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation  4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_quch_36 <- fia_data %>%
+  filter(species == "QUCH") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_quch_36$dbh_class <- as.numeric(fia_quch_36$dbh_class)
+fia_quch_36 <- mutate(fia_quch_36, canopy_width = (quch_a1 + quch_a2 * (dbh_class)))
+fia_quch_36$canopy_width <- as.numeric(fia_quch_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_quch_canopy_36 <- fia_quch_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_quch_sum_36 <- fia_quch_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# QUKE Canopy Cover (using midpoint dbh class)
+```{r}
+# Use Equation 4.4.2.1: CW = a1 + a2 * DBH (DBH>=DBHT)
+fia_quke_36 <- fia_data %>%
+  filter(species == "QUKE") %>%
+  select(unique_plot, dbh, ht,
+         admin_forest, species) %>%
+  mutate(dbh_class = case_when (dbh >= 10.2 & dbh <= 30.4 ~"7.5",
+                                dbh > 30.4 & dbh <= 60.9 ~ "17.5",
+                                dbh > 60.9 & dbh <= 91.3 ~ "29.5",
+                                dbh > 91.3 ~ "36")) 
+
+fia_quke_36$dbh_class <- as.numeric(fia_quke_36$dbh_class)
+fia_quke_36 <- mutate(fia_quke_36, canopy_width = (quke_a1 + quke_a2 * (dbh_class)))
+fia_quke_36$canopy_width <- as.numeric(fia_quke_36$canopy_width)
+
+## -------------------------------------------------------------------------------------------------
+fia_quke_canopy_36 <- fia_quke_36 %>%
+  mutate(canopy_area = (pi) * ((0.5 * canopy_width)^2))
+
+## -------------------------------------------------------------------------------------------------
+# sum across all size classes for each plot
+fia_quke_sum_36 <- fia_quke_canopy_36 %>%
+  group_by(unique_plot, dbh_class, species, admin_forest) %>%
+  tally(canopy_area) 
+```
+
+# Combine all dataframes to calculate relative canopy cover
+```{r}
+# combine all species dataframes back together so we can sum the species in plots
+fia_total_canopy_36 <- do.call("rbind", list(fia_abco_sum_36,
+                                          fia_cade_sum_36,
+                                          fia_pico_sum_36,
+                                          fia_pije_sum_36,
+                                          fia_pila_sum_36,
+                                          fia_pipo_sum_36,
+                                          fia_psma_sum_36,
+                                          fia_quch_sum_36,
+                                          fia_quke_sum_36))
+
+## -------------------------------------------------------------------------------------------------
+# Next we can sum the total canopy cover of all trees from all size classes PER PLOT
+fia_total_canopy_plot_36 <- fia_total_canopy_36 %>% 
+  group_by(unique_plot, admin_forest) %>% 
+  tally(n) %>% 
+  rename("total_canopy_area" = "n" )
+
+## ------------------------------------------------------------------------------------------------
+# right now the total_canopy_area column is in ft^2, we want to convert this to m^2. 
+# 1 ft^2 = 0.092903 m^2
+
+# create a column that converts squared feet to squared meters
+fia_total_canopy_plot_36 <- fia_total_canopy_plot_36 %>% 
+  mutate(total_canopy_area_meters = (total_canopy_area *0.092903))
+
+# Divide the total canopy area per plot (measured in m^2) by the size of the plot (also measured in m^2). Note: A vtm plot is 672.45 m^2. Then multiply by 100 to obtain a percent canopy cover. 
+fia_total_canopy_plot_36 <- fia_total_canopy_plot_36 %>% 
+  mutate(percent_canopy_cover = ((total_canopy_area_meters/672.45) * 100))
+
+# note that some of the percent covers are above 100%, because we have not yet accounted for overlapping canopies. 
+# we have now determined the percent canopy cover without accounting for overlap--> equivalent to equation 1 in Crookston and Stage 1999 (https://www.fs.fed.us/rm/pubs/rmrs_gtr024.pdf).
+```
+
+# Now apply equation 2 from Crookston and Stage 1999 to account for overlapping canopies. 
+```{r}
+# Equation 2 (page 2 of https://www.fs.fed.us/rm/pubs/rmrs_gtr024.pdf):
+# C = 100 [1 – exp ( – .01 C′ )]
+# C = percent canopy cover that accounts for overlap,
+# C′ = equation 1-percent canopy cover without accounting for overlap. *This has been calculated in the section above. 
+# exp = e^
+
+fia_total_canopy_plot_36 <- fia_total_canopy_plot_36 %>% 
+  mutate(percent_canopy_cover_nonoverlap = (100*(1-(e^(-.01*percent_canopy_cover)))))
+# I THINK it's okay to do this step here (after I've summed the canopy cover per plot), but I can go back and check if applying this equation earlier on changes our results. 
+```
+
+# Summarize Findings
+```{r}
+# with canopy overlap
+# average percent canopy cover across all YPMC plots when allowing for canopy overlap
+mean(fia_total_canopy_plot_36$percent_canopy_cover) # 152.6694
+
+canopy_cover_overlap_36 <- fia_total_canopy_plot_36 %>% 
+  mutate (admin_forest = "All Plots") %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover),
+    sd = sd(percent_canopy_cover),
+    sample_size = n(),
+    se = sd(percent_canopy_cover)/sqrt(n()),
+    var = var(percent_canopy_cover))
+
+canopy_cover_overlap_forests_36 <- fia_total_canopy_plot_36 %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover),
+    sd = sd(percent_canopy_cover),
+    sample_size = n(),
+    se = sd(percent_canopy_cover)/sqrt(n()),
+    var = var(percent_canopy_cover))
+
+canopy_cover_overlap_summary_36 <- do.call("rbind", list(canopy_cover_overlap_36,
+                                          canopy_cover_overlap_forests_36))
+
+## -----------------------------------------------------------------------------------------------
+# without canopy overlap
+# average percent canopy cover across all YPMC plots when removing for canopy overlap
+mean(fia_total_canopy_plot_36$percent_canopy_cover_nonoverlap)
+# 67.638
+
+canopy_cover_nonoverlap_36 <- fia_total_canopy_plot_36 %>% 
+  mutate (admin_forest = "All Plots") %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover_nonoverlap),
+    sd = sd(percent_canopy_cover_nonoverlap),
+    sample_size = n(),
+    se = sd(percent_canopy_cover_nonoverlap)/sqrt(n()),
+    var = var(percent_canopy_cover_nonoverlap))
+
+canopy_cover_nonoverlap_forests_36 <- fia_total_canopy_plot_36 %>% 
+  group_by(admin_forest) %>% 
+  summarize(
+    mean = mean(percent_canopy_cover_nonoverlap),
+    sd = sd(percent_canopy_cover_nonoverlap),
+    sample_size = n(),
+    se = sd(percent_canopy_cover_nonoverlap)/sqrt(n()),
+    var = var(percent_canopy_cover_nonoverlap))
+
+canopy_cover_nonoverlap_summary_36 <- do.call("rbind", list(canopy_cover_nonoverlap_36,
+                                          canopy_cover_nonoverlap_forests_36))
+```
+
+# Make Graph - Hannah need to fix. Ask for Leana's help...
+```{r}
+canopy_cover_nonoverlap_summary_rm_NA_36 <-canopy_cover_nonoverlap_summary_36 %>% 
+  mutate(color = case_when(admin_forest == "All Plots" ~ "1",
+                           admin_forest == "ANF" ~ "0",
+                           admin_forest == "CNF" ~ "0",
+                           admin_forest == "LPNF" ~ "0",
+                           admin_forest == "SBNF" ~ "0",
+                           admin_forest == "Other" ~ "0",
+                           TRUE ~ "none"))
+
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "anf"] <-"ANF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "cnf"] <-"CNF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "lpnf"] <-"LPNF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "sbnf"] <-"SBNF"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "N/A"] <-"Other"
+# canopy_cover_nonoverlap_summary_rm_NA$admin_forest[canopy_cover_nonoverlap_summary_rm_NA$admin_forest == "All Plots"] <-"All YPMC"
+
+# make factors
+x_factor <- c("ANF", "CNF", "LPNF", "SBNF","Other", "All Plots")
+color_factor <- c("0", "1")
+
+ ggplot(canopy_cover_nonoverlap_summary_rm_NA_36,aes(x=factor(admin_forest, x_factor),y=mean, fill=factor(color, color_factor)))+
+   scale_fill_manual(values = c("#636161", "#A00D35"))+
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+  geom_point(data = canopy_cover_nonoverlap_summary_rm_NA_36, aes(x=admin_forest, y= mean),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+geom_errorbar(data = canopy_cover_nonoverlap_summary_rm_NA_36,
+              position=position_dodge(width = 0.4),
+                aes(x = admin_forest, 
+                    ymin = mean - se,
+                    ymax = mean + se),
+                color = "black",
+                width = 0.08) +
+  theme_bw()+
+  labs(title = "Average Percent Canopy Cover of YPMC", x = "Location", y = "Percent Canopy Cover") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 90))+
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  theme(legend.position = "none") 
+```

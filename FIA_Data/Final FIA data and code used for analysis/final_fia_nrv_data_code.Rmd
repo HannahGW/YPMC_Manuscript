@@ -1,0 +1,187 @@
+---
+title: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***This code creates the final contemporary data that was used the Bren Master's Group Project. Here we combine tidied data from the FIA program and tidied data from the intensified data provided by the USFS. The data provided by the USFS containes tidied FIA data in addition to plot data from intensified plots (data colleted following the same protcol as the FIA). Because the USFS data contains FIA data this code also filters the data so that we did not double count those FIA plots in our analysis. We used the raw data from the FIA to represent FIA plots. We did NOT use the tidied FIA data provided in the USFS data because when we compared plot level data between the two datasets the data from the USFS did not always match up with the data in the raw FIA dataset (see compare_raw_usfs_fia_data.Rmd for more info). So to be conservative and because we do not know what steps were taken by the remote sensing lab to tidy the data, we used the data from the source (ie the raw FIA data) rather than the tidied USFS data.***
+
+# Packages
+```{r}
+library(tidyverse)
+library(sf)
+library(here)
+```
+
+# Load and Tidy Data
+
+part of the tidying process included making sure the column names were consistent between the datasets so we were able to join the two dataframes after tidying
+```{r}
+################################## Tidied Original FIA Tree Data ##############################
+#read in clipped and tidied Raw FIA data and prep for binding with the usfs data
+
+raw_tidy <- read_csv(here::here("./FIA_Data/Online_FIA_Data/output datasheets/all_nrv_tree_data.csv")) %>% 
+  separate(unique_plot, into=c("county", "plot", "year"), remove=F) %>% 
+  mutate(plot = as.numeric(plot)) %>%  
+  mutate(data_source = "Raw FIA_Tree Subplot") %>% 
+  mutate(Range = str_replace(Range, pattern = "Transverse Range", "transverse"),
+         Range = str_replace(Range, pattern = "Peninsular Range", "peninsular")) %>% 
+  rename(slope = slope_avg,
+         lat_fuzz = lat,
+         lon_fuzz = lon,
+         crown_ratio = cr,
+         join_plot = plot,
+         survey_year = year,
+         dbh = dia,
+         range = Range) %>% 
+  filter(invyr >= 2001,
+        invyr <= 2010) %>% # only keep data from the 2000s field surveys. 
+  filter(species != "P. contorta") %>% 
+  mutate(basa = "NA", # make dummy columns so can easily combine with the USFS dataframe
+         ntpa = "NA",
+         crwi = "NA",
+         crln = "NA",
+         hex_nonhex = "hex", # hex data = raw/original FIA data (nonhex = data provided by the USFS)
+         dbhp = "NA") %>% 
+  select(-county)
+
+test2 <- raw_tidy %>% 
+select(join_plot, survey_year) %>% 
+  distinct(.keep_all = T) %>% 
+  group_by(survey_year) %>% 
+  tally()
+
+raw_unique_plots <- unique(raw_tidy$join_plot) # make a list of the unique plot numbers so can remove those plots from the df below
+
+############################### Tidied Original FIA Seedling Data ############################
+
+seedling_tidy <- read_csv(here::here("./FIA_Data/Online_FIA_Data/output datasheets/fia_socal_ypmc_seedlings.csv")) %>% 
+  separate(unique_plot, into=c("county", "plot", "year"), remove=F) %>% 
+  mutate(plot = as.numeric(plot)) %>% 
+  select(unique_plot, plot, subp, invyr, species, Range, lat, lon) %>% 
+  filter(invyr >= 2001,
+        invyr <= 2010) %>% 
+  mutate(data_source = "Raw FIA_Seedling Microplot") %>% 
+  mutate(survey_date= "NA", 
+         dbh = 1, # assign seedlings a dbh of 1in as that is the max dbh to be recorded as a seedling
+         ht = 0, # insert dummy value
+         elev = 0, # insert dummy value
+         aspect = "NA",
+         aspect_qualitative = "NA",
+         slope = "NA",
+         admin_forest = "NA",
+         jurisdiction = "NA",
+         reserved = "NA",
+         recorded_fire_damage = "NA",
+         crown_ratio = "NA",
+         uncrcd = "NA",
+         cclcd = "NA",
+         cdencd = "NA",
+         basa = "NA",
+         ntpa = "NA",
+         crwi = "NA",
+         crln = "NA",
+         hex_nonhex = "hex",
+         dbhp = "NA",
+         survey_year = "NA") %>% 
+  rename(lat_fuzz = lat,
+         lon_fuzz = lon,
+         join_plot = plot,
+         range = Range) %>% 
+  mutate(range = str_replace(range, pattern = "Transverse Range", "transverse"),
+         range = str_replace(range, pattern = "Peninsular Range", "peninsular")) 
+# dead trees removed in the tidy fia data.rmd
+  
+###################################### Buffered USFS Data #######################################
+# read in clipped and tidied USFS FIA data and prep for binding with the raw fia data
+
+usfs_tidy <- read_csv(here::here("./FIA_Data/USFS_intensified_and_FIA_data/all_nfs_fia_final.csv")) %>%  #had to manually deleted geometry column
+  mutate(data_source = "USFS") %>% 
+  filter(lvdd == "L") %>% #keep live trees/remove dead trees 
+  rename(aspect = aspc, #rename columns so no confusion with above df
+         slope = slop,
+         survey_year = ddate_year,
+         dbh = dbhi,
+         elev = elev.x,
+         ht = heig,
+         admin_forest=forest,
+         recorded_fire_damage = ctcd,
+         reserved = wilderness,
+         crown_ratio = crow,
+         join_plot = public_plo,
+         unique_plot = r5_pltnum) %>% 
+  #filter(survey_year != 2011) %>% # only keep plots from 2001-2010
+  filter(!join_plot %in% raw_unique_plots) %>%  # remove plots from the raw fia data. shoudl only have intensified plots now, but alas there are 1 raw fia plot left, so remove it below
+  filter(join_plot != "54843") %>% # remove last raw fia plot
+  unite(survey_date, c("ddate_month", "survey_year"), sep="-", remove=F) %>% 
+  select(-elev.y, -plot) %>% 
+  mutate(aspect_qualitative = case_when( 
+    aspect <= 0 ~ "Flat",
+    aspect <= 22.5 ~ "N",
+    aspect <= 67.5 ~ "NE",
+    aspect <= 112.5 ~ "E",
+    aspect <= 157.5 ~ "SE",
+    aspect <= 202.5 ~ "S",
+    aspect <= 247.5 ~ "SW",
+    aspect <= 292.5 ~ "W",
+    aspect <= 337.5 ~ "NW",
+    aspect <= 360 ~ "N")) %>% 
+  mutate(cclcd = "NA",
+         uncrcd = "NA",
+         cdencd = "NA",
+         invyr = "NA",
+         jurisdiction = "Forest Service/Federal",
+         subp = "NA") %>%
+  ungroup() %>% 
+  select(-ddate_month, -lvdd)
+
+# bind these bitches together!
+final_binded_fia_ypmc_data <- rbind(raw_tidy, seedling_tidy, usfs_tidy) 
+
+# change units
+final_binded_fia_ypmc_data <- final_binded_fia_ypmc_data  %>% 
+  mutate(elev = elev/3.281, # Change from feet to meters
+         dbh = dbh*2.54, # Change from in to cm
+         ht = ht/3.281) # Change from ft to meters
+
+########################### Export Tidied Data #########################
+#uncomment below to export the data
+
+# # write csv
+#write.csv(final_binded_fia_ypmc_data, "final_binded_fia_ypmc_data.csv", row.names=F)
+# 
+# # write shapefile
+# final_binded_fia_ypmc_data_sf <- st_as_sf(final_binded_fia_ypmc_data, coords = c("lon_fuzz", "lat_fuzz"), crs = 4326, remove=F) 
+# st_write(final_binded_fia_ypmc_data_sf, "final_binded_fia_ypmc_data.shp") # not updated yet
+
+
+```
+62 plots in raw tidied df, 50 if remove plots after 2011
+149 plots in the usfs tidied df
+AND 211 plots in the joined df! 
+
+```{r}
+test <- usfs_tidy <- read_csv(here::here("./FIA_Data/USFS_intensified_and_FIA_data/all_nfs_fia_final.csv")) %>%  #had to manually deleted geometry column
+  mutate(data_source = "USFS") %>% 
+  filter(lvdd == "L") %>% #keep live trees/remove dead trees 
+  rename(aspect = aspc, #rename columns so no confusion with above df
+         slope = slop,
+         survey_year = ddate_year,
+         dbh = dbhi,
+         elev = elev.x,
+         ht = heig,
+         admin_forest=forest,
+         recorded_fire_damage = ctcd,
+         reserved = wilderness,
+         crown_ratio = crow,
+         join_plot = public_plo,
+         unique_plot = r5_pltnum) %>% 
+  select(join_plot, hex_nonhex, survey_year) %>% 
+  distinct(.keep_all = T) %>% 
+  group_by(survey_year, hex_nonhex) %>% 
+  tally()
+```
+

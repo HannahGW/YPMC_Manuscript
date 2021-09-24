@@ -1,0 +1,393 @@
+---
+title: "FIA Sapling Tree Data with Coordinates"
+author: "AMP"
+date: "6/2021"
+output: html_document
+---
+
+# Packages
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(here)
+library(sf)
+
+```
+
+# Load Tree Data
+```{r}
+# tree level data
+anf  <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/ANF_FSVEG_TXPT_V.csv"))
+cnf  <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/CNF_FSVEG_TXPT_V.csv"))
+lpnf <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/LPF_FSVEG_TXPT_V.csv"))
+sbnf <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/BDF_FSVEG_TXPT_V.csv"))
+
+# plot level data
+anf1  <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/plot_data/ANF_FSVEG_VXPT_V.csv"))
+cnf1  <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/plot_data/cNF_FSVEG_VXPT_V.csv"))
+lpnf1 <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/plot_data/LPF_FSVEG_VXPT_V.csv"))
+sbnf1 <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/plot_data/BDF_FSVEG_VXPT_V.csv"))
+
+# additional plot data (e.g. coords, hex/nonhex, etc.)
+coords <- read_sf(dsn = here::here("FIA_Data", "USFS_intensified_and_FIA_data", "FIA_shp"), layer = "fia_socal_ypmc_buffer") %>%
+  clean_names() %>%
+  st_transform(4326)
+```
+**USFS INTENSIFIED PLOT METADATA**
+https://www.fs.fed.us/r5/rsl/projects/inventory/fsveg-tree.shtml
+
+
+# Tree Data
+## Bind and Tidy Tree Data
+```{r}
+tree_data <- rbind(anf, cnf, lpnf, sbnf) %>% 
+  clean_names() %>% 
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", 
+    remove = FALSE) %>% 
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE) %>% 
+  rename("species" = "spec") %>% # Rename species column
+  mutate(species = case_when(
+      species %in% "CADE27" ~ "CADE", # Change FSVEG code for Calocedrus decurrens to CADE
+      species %in% "PICO3" ~ "PICO", # Change FSVEG code for Pinus coulteri to PICO
+      species %in% c("QUCH2", "QUCHC") ~ "QUCH", # Change FSVEG code for Quercus chrysolepis to QUCH
+      TRUE ~ as.character(species))) %>% # Keep all other species the same
+  filter(species %in% c("PIPO", "PIJE", "PILA", "ABCO", "CADE", "PSMA", "PICO", "QUKE", "QUCH")) %>% # Filter down to YPMC species
+  mutate(temp = case_when(
+      species %in% c("PSMA", "PICO", "QUKE", "QUCH") ~ "0", 
+      TRUE ~ "1")) %>% # cheaters way to remove plots with just psma/oaks/pico/psma+oaks/pico+oaks
+    mutate(temp = as.numeric(temp)) %>% 
+    group_by(gis_link) %>% # Group by gis_link
+    mutate(all_plot_species2 = sum(temp)) %>% 
+    filter(all_plot_species2 != 0) %>%  # Keep  plots that do not equal 0
+    select(-temp, -all_plot_species2) 
+  
+  
+
+# Join tree data with shapefile to add in coordinates
+tree_data_join <- inner_join(tree_data, coords, by = "r5_pltnum")
+
+
+
+test <- tree_data %>% 
+  select(r5_pltnum, ddate_year) %>% 
+  distinct(.keep_all = T) %>% 
+  group_by(ddate_year) %>% 
+  tally()
+
+test1 <- tree_data_join %>% 
+  select(r5_pltnum, ddate_year) %>% 
+  distinct(.keep_all = T) %>% 
+  group_by(ddate_year) %>% 
+  tally()
+  
+  mutate(ddate_year = as.character(ddate_year)) # Change ddate_year column from integer to character
+
+
+```
+
+## Bind and Tidy Plot data
+```{r}
+plot_data <- rbind(anf1, cnf1, lpnf1, sbnf1) %>% 
+  clean_names() %>% 
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", 
+    remove = T) %>% 
+  select(r5_pltnum, aspc, slop, elev, gis_link) %>% 
+  distinct(.keep_all = T) %>% 
+  mutate(aspc_qualitative = case_when( 
+    aspc <= 0 ~ "Flat",
+    aspc <= 22.5 ~ "N",
+    aspc <= 67.5 ~ "NE",
+    aspc <= 112.5 ~ "E",
+    aspc <= 157.5 ~ "SE",
+    aspc <= 202.5 ~ "S",
+    aspc <= 247.5 ~ "SW",
+    aspc <= 292.5 ~ "W",
+    aspc <= 337.5 ~ "NW",
+    aspc <= 360 ~ "N"))
+
+
+```
+
+
+# FIA Sapling Data 
+
+```{r Read in FIA Tree Data}
+
+# Metadata: https://www.fs.fed.us/r5/rsl/projects/inventory/fsveg-tree.shtml
+
+# Load filtered YPMC buffer FIA data
+all_nfs_fia_tree <- read_csv(here("./FIA Data/USFS_intensified_and_FIA_data/all_nfs_fia_ypmc.csv")) %>% 
+  clean_names() %>%  # Clean names
+  mutate(ddate_year = as.character(ddate_year)) # Change ddate_year column from integer to character
+
+# Create new df where forest and plot columns are merged to match with shapefile
+all_nfs_fia_unite <- all_nfs_fia_tree %>% 
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  )
+
+# Extract plot column for new vector
+all_nfs_ypmc_plot = unique(all_nfs_fia_unite$plot) # Only pull unique plot numbers
+
+```
+
+
+Read in shapefile:
+
+```{r Read in FIA Shapefile}
+
+## Thanks to Anne-Marie Parkinson with the help for this code! ##
+
+# Load the FIA shapefile into R
+fia_coords <- read_sf(dsn = here::here("raw_data", "FIA_shp"), layer = "fia_socal_ypmc_buffer") %>%
+  clean_names() %>%
+  st_transform(4326)
+
+# Join FIA tree data with shapefile to add in coordinates
+all_nfs_fia_join <- inner_join(all_nfs_fia_unite, fia_coords, by = "r5_pltnum")
+
+```
+
+```{r Filter new data frame to desired variables}
+
+## Thanks to Anne-Marie Parkinson with the help for this code! ##
+
+# Seeding/Sapling definition from Erin McCann: "Within each subplot there is a microplot where all trees with a DBH of 2.5 to 12.7cm are inventoried and all live tree seedlings are inventoried (conifer seedlings at least 15.2cm in height and root collar diameter<2.5cm and hardwood seedlings being at least 30.5cm tall and a root collar diameter <2.5cm). "
+
+# Need to convert cm to inches, since DBH in VTM is also in inches
+
+cm_to_in = 0.39370079
+
+dbh1_cm_to_in = 2.5*cm_to_in
+dbh2_cm_to_in = 12.7*cm_to_in
+
+conifer_height_cm_to_in = 15.2*cm_to_in
+
+# Filter columns to variables of interest ----
+
+all_nfs_fia_select <- all_nfs_fia_join %>% 
+  st_as_sf() %>% 
+  mutate(
+    forest = case_when( 
+      forest == "01" ~ "ANF",
+      forest == "02" ~ "CNF",
+      forest == "07" ~ "LPF",
+      forest == "12" ~ "BDF")) %>% # Change forest codes to abbreviations
+  select(r5_pltnum, public_plo, plot, ddate_year, ddate_month, lvdd, aspc, slop, elev.x, species, dbhi, heig, basa, ntpa, crwi, crln, crow, elev.y, lat_fuzz, lon_fuzz, forest, range, wilderness, ctcd, hex_nonhex, dbhp) # Keep only variables of interest
+
+
+# Write CSVs for final FIA CSV ----
+
+#write_csv(all_nfs_fia_select, here("./FIA Data/USFS_intensified_and_FIA_data/all_nfs_fia_final.csv"))
+
+# Troubleshooting tip for backslashes: https://stackoverflow.com/questions/27721008/how-do-i-deal-with-special-characters-like-in-my-regex
+
+```
+
+## FIA Shrub Data
+
+tidied by Jen
+
+```{r Read in FIA plot data}
+# Read in data ----
+
+# Angeles NF
+# anf_fia_plot <- read_csv("G:/Github/gotforestry/R/fia_data_observation/plot_data/ANF_FSVEG_VXPT_V.csv") %>% 
+anf_fia_raw <- read_csv(here("shrubs_fia_data", "ANF_FSVEG_VXPT_V.csv"))
+anf_fia_plot <- anf_fia_raw %>% 
+  clean_names() %>% 
+  rename("species" = "spec") %>% 
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  ) %>% 
+  mutate(ddate_year = as.character(ddate_year)) %>% # Change ddate_year column from integer to character
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  ) 
+
+# Cleveland NF
+# cnf_fia_plot <- read_csv("G:/Github/gotforestry/R/fia_data_observation/plot_data/CNF_FSVEG_VXPT_V.csv") %>% 
+cnf_fia_plot <- read_csv(here("shrubs_fia_data", "CNF_FSVEG_VXPT_V.csv")) %>% 
+  clean_names() %>%  # Clean names
+  rename("species" = "spec") %>% # Rename species column
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  ) %>% 
+  mutate(ddate_year = as.character(ddate_year)) %>% # Change ddate_year column from integer to character
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  )  # I think the r5_platnum column was done incorrectly? hgw
+
+# Los Padres NF
+# lpf_fia_plot <- read_csv("G:/Github/gotforestry/R/fia_data_observation/plot_data/LPF_FSVEG_VXPT_V.csv") %>% 
+lpf_fia_plot <- read_csv(here("shrubs_fia_data", "LPF_FSVEG_VXPT_V.csv")) %>% 
+  clean_names() %>% 
+  rename("species" = "spec") %>% 
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  ) %>% 
+  mutate(ddate_year = as.character(ddate_year)) %>% # Change ddate_year column from integer to character
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  ) 
+
+# San Bernardino NF
+# bdf_fia_plot <- read_csv("G:/Github/gotforestry/R/fia_data_observation/plot_data/BDF_FSVEG_VXPT_V.csv") %>% 
+bdf_fia_plot <- read_csv(here("shrubs_fia_data", "BDF_FSVEG_VXPT_V.csv")) %>% 
+  clean_names() %>% 
+  rename("species" = "spec") %>% 
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  ) %>% 
+  mutate(ddate_year = as.character(ddate_year)) %>% # Change ddate_year column from integer to character
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  )  
+
+
+```
+
+```{r Limit to shrub data}
+
+# Note: Plots where LFRM = "SR" and "SS" seem to be different from YPMC plots? When I tried to filter to the plots from the joined YPMC plot CSV, I seem to get no data.
+
+# ANF Shrub Data -----
+
+# Get number of observations per plot
+anf_fia_plot_count <- anf_fia_plot %>% 
+  group_by(plot) %>% 
+  count() # 139 plots 
+
+# Find amount of shrub cover
+anf_shrub <- anf_fia_plot %>%
+  filter(lfrm %in% c("SH", "SS")) %>% # hgw changed "SR" to "SH" since "SR" is not in the dataframe. 
+  group_by(r5_pltnum, forest, plot, lfrm) %>% 
+  count() 
+
+# Join both tables together
+anf_shrub_join <- inner_join(anf_fia_plot_count, anf_shrub, by = "plot") %>% 
+  rename(
+    "observ_count" = "n.x",
+    "shrub_count" = "n.y"
+  ) %>% 
+  mutate(
+    shrub_pct = round(shrub_count/observ_count*100, 2)
+  ) # this is missing species (hgw)
+
+# CNF Shrub Data ----
+
+# Get number of observations per plot
+cnf_fia_plot_count <- cnf_fia_plot %>% 
+  group_by(plot) %>% 
+  count()
+
+# Find amount of shrub cover
+cnf_shrub <- cnf_fia_plot %>%
+  filter(lfrm %in% c("SH", "SS")) %>% 
+  group_by(r5_pltnum, forest, plot, lfrm) %>% 
+  count()
+
+# Join both tables together
+cnf_shrub_join <- inner_join(cnf_fia_plot_count, cnf_shrub, by = "plot") %>% 
+  rename(
+    "observ_count" = "n.x",
+    "shrub_count" = "n.y"
+  ) %>% 
+  mutate(
+    shrub_pct = round(shrub_count/observ_count*100, 2)
+  )
+
+# LPF Shrub Data ----
+
+# Get number of observations per plot
+lpf_fia_plot_count <- lpf_fia_plot %>% 
+  group_by(plot) %>% 
+  count()
+
+# Find amount of shrub cover
+lpf_shrub <- lpf_fia_plot %>%
+  filter(lfrm %in% c("SH", "SS")) %>% 
+  group_by(r5_pltnum, forest, plot, lfrm) %>% 
+  count()
+
+# Join both tables together
+lpf_shrub_join <- inner_join(lpf_fia_plot_count, lpf_shrub, by = "plot") %>% 
+  rename(
+    "observ_count" = "n.x",
+    "shrub_count" = "n.y"
+  ) %>% 
+  mutate(
+    shrub_pct = round(shrub_count/observ_count*100, 2)
+  )
+
+# BDF Shrub Data ----
+
+# Get number of observations per plot
+bdf_fia_plot_count <- bdf_fia_plot %>% 
+  group_by(plot) %>% 
+  count()
+
+# Find amount of shrub cover
+bdf_shrub <- bdf_fia_plot %>%
+  filter(lfrm %in% c("SH", "SS")) %>% 
+  group_by(r5_pltnum, forest, plot, lfrm) %>% 
+  count()
+
+# Join both tables together
+bdf_shrub_join <- inner_join(bdf_fia_plot_count, bdf_shrub, by = "plot") %>% 
+  rename(
+    "observ_count" = "n.x",
+    "shrub_count" = "n.y"
+  ) %>% 
+  mutate(
+    shrub_pct = round(shrub_count/observ_count*100, 2)
+  )
+
+
+# Write CSVs for the shrubs ----
+
+# write_csv(anf_shrub_join, here("R", "fia_final_data", "anf_shrub.csv"))
+# write_csv(cnf_shrub_join, here("R", "fia_final_data", "cnf_shrub.csv"))
+# write_csv(lpf_shrub_join, here("R", "fia_final_data", "lpf_shrub.csv"))
+# write_csv(bdf_shrub_join, here("R", "fia_final_data", "bdf_shrub.csv"))
+```
+

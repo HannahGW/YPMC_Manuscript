@@ -1,0 +1,567 @@
+---
+title: "vtm_tree_density"
+author: "Leana Goetze"
+date: "11/8/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE)
+```
+
+# atach packages
+```{r}
+library(tidyverse)
+```
+
+# read in data
+```{r}
+vtm_data <- read.table(here::here("vtm_data", "vtm_dataset_750m_buffer.txt"))
+
+# select columns of interest
+vtm_data_select <- vtm_data %>% 
+  select(plotkey, n) %>% 
+  group_by(plotkey) %>% 
+  tally(n) 
+
+# multiply n by (1/.0809) to convert to trees/hectare instead of trees/.08 hecare
+vtm_data_hecare <- vtm_data_select %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+
+# find the average of trees_per_hectare column
+mean(vtm_data_hecare $tree_per_hectare)
+median(vtm_data_hecare $tree_per_hectare)
+# mode 225.7438
+# median 173.0532
+```
+
+# By species
+```{r}
+# pipo ------
+vtm_species_pipo <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "PIPO") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_species_pipo$tree_per_hectare)
+median(vtm_species_pipo$tree_per_hectare)
+# 130.2421
+# 86.52658
+
+#pije -------
+vtm_species_pije <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "PIJE") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_species_pije$tree_per_hectare)
+# 99.07201
+median(vtm_species_pije$tree_per_hectare)
+# 86.52658
+
+#pila ------
+vtm_species_pila <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "PILA") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_species_pila$tree_per_hectare)
+# 56.68374
+median(vtm_species_pila$tree_per_hectare)
+# 49.44376
+
+# pico3 ------
+vtm_species_pico3 <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "PICO3") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_species_pico3$tree_per_hectare)
+# 77.77091
+median(vtm_species_pico3$tree_per_hectare)
+# 61.8047
+
+#psma -----
+vtm_species_psma <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "PSMA") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  slice(c(-14))
+
+mean(vtm_species_psma$tree_per_hectare)
+# 54.19797
+median(vtm_species_psma$tree_per_hectare)
+# 37.08282
+
+#cade -------
+vtm_species_cade <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "CADE") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809))) %>%
+  slice(c(-32))
+
+mean(vtm_species_cade$tree_per_hectare)
+# 67.14997
+median(vtm_species_cade$tree_per_hectare)
+# 37.08282
+
+#abco ------
+vtm_species_abco <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "ABCO") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_species_abco$tree_per_hectare)
+# 87.06401
+median(vtm_species_abco$tree_per_hectare)
+# 61.8047
+
+#quch ------
+vtm_species_quch <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "QUCH") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_species_quch$tree_per_hectare)
+# 153.7527
+median(vtm_species_quch$tree_per_hectare)
+# 61.8047
+
+#quke ------
+vtm_species_quke <- vtm_data %>%
+  select(abbreviation,n,plotkey) %>% 
+  filter(abbreviation == "QUKE") %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_species_quke$tree_per_hectare)
+# 97.85744
+median(vtm_species_quke$tree_per_hectare)
+# 61.8047
+
+# create new dataframe --> join this with all other species dataframe later
+pipo <- data.frame("pipo", mean(vtm_species_pipo$tree_per_hectare), median(vtm_species_pipo$tree_per_hectare)) %>% 
+  rename ("species" = "X.pipo.", "mean" = "mean.vtm_species_pipo.tree_per_hectare.", "median" = "median.vtm_species_pipo.tree_per_hectare.")
+
+pije <- data.frame("pije", mean(vtm_species_pije$tree_per_hectare), median(vtm_species_pije$tree_per_hectare)) %>% 
+  rename ("species" = "X.pije.", "mean" = "mean.vtm_species_pije.tree_per_hectare.", "median" = "median.vtm_species_pije.tree_per_hectare.")
+
+pila <- data.frame("pila", mean(vtm_species_pila$tree_per_hectare), median(vtm_species_pila$tree_per_hectare)) %>% 
+  rename ("species" = "X.pila.", "mean" = "mean.vtm_species_pila.tree_per_hectare.", "median" = "median.vtm_species_pila.tree_per_hectare.")
+
+pico3 <- data.frame("pico3", mean(vtm_species_pico3$tree_per_hectare), median(vtm_species_pico3$tree_per_hectare)) %>% 
+  rename ("species" = "X.pico3.", "mean" = "mean.vtm_species_pico3.tree_per_hectare.", "median" = "median.vtm_species_pico3.tree_per_hectare.")
+
+psma <- data.frame("psma", mean(vtm_species_psma$tree_per_hectare), median(vtm_species_psma$tree_per_hectare)) %>% 
+  rename ("species" = "X.psma.", "mean" = "mean.vtm_species_psma.tree_per_hectare.", "median" = "median.vtm_species_psma.tree_per_hectare.")
+
+cade <- data.frame("cade", mean(vtm_species_cade$tree_per_hectare), median(vtm_species_cade$tree_per_hectare)) %>% 
+  rename ("species" = "X.cade.", "mean" = "mean.vtm_species_cade.tree_per_hectare.", "median" = "median.vtm_species_cade.tree_per_hectare.")
+
+abco <- data.frame("abco", mean(vtm_species_abco$tree_per_hectare), median(vtm_species_abco$tree_per_hectare)) %>% 
+  rename ("species" = "X.abco.", "mean" = "mean.vtm_species_abco.tree_per_hectare.", "median" = "median.vtm_species_abco.tree_per_hectare.")
+
+quch <- data.frame("quch", mean(vtm_species_quch$tree_per_hectare), median(vtm_species_quch$tree_per_hectare)) %>% 
+  rename ("species" = "X.quch.", "mean" = "mean.vtm_species_quch.tree_per_hectare.", "median" = "median.vtm_species_quch.tree_per_hectare.")
+
+quke <- data.frame("quke", mean(vtm_species_quke$tree_per_hectare), median(vtm_species_quke$tree_per_hectare)) %>% 
+  rename ("species" = "X.quke.", "mean" = "mean.vtm_species_quke.tree_per_hectare.", "median" = "median.vtm_species_quke.tree_per_hectare.")
+
+# merge all the data frames together
+all_species_density <- do.call("rbind", list(abco, cade, pico3, pije, pila, pipo, psma, quch, quke))
+
+# Graph of species density
+ggplot(all_species_density, aes(x = species, y = mean)) + 
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by Species", x = "species", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10))
+
+# Comments: weird that PIPO is so high, I don't think that's right. Must have been misidentified. Also wondering if we want to rename PICO3 to just PICO? 
+
+# Leana's response: yeah this is what we discussed as a group a few times..I think they def confused pipo/pije. We had discussed grouping these two species together, and I think we'll have to (I put it on the agenda for tomorrow)! We can also rename PICO3 to PICO, I was originally following the FIA data but I think they changed this abbreviation too. 
+```
+
+
+# By pines/oaks
+```{r}
+# pinus -------
+vtm_pinus <- vtm_data %>%
+  select(genus, abbreviation, n, plotkey) %>%
+  filter(genus == "pinus") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809))) )
+
+mean(vtm_pinus$tree_per_hectare)
+# 96.75244
+median(vtm_pinus$tree_per_hectare)
+# 61.8047
+
+# quercus ------
+vtm_quercus <- vtm_data %>%
+  select(genus, abbreviation, n, plotkey) %>%
+  filter(genus == "quercus") %>%
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_quercus$tree_per_hectare)
+# 129.1277
+median(vtm_quercus$tree_per_hectare)
+# 61.8047
+
+# create new dataframe 
+quercus <- data.frame("quercus", mean(vtm_quercus$tree_per_hectare), 
+                      median(vtm_quercus$tree_per_hectare)) %>%
+  rename("genus" = "X.quercus.", "mean" = "mean.vtm_quercus.tree_per_hectare.",
+         "median" = "median.vtm_quercus.tree_per_hectare.")
+
+pinus <- data.frame("pinus", mean(vtm_pinus$tree_per_hectare), 
+                      median(vtm_pinus$tree_per_hectare)) %>%
+  rename("genus" = "X.pinus.", "mean" = "mean.vtm_pinus.tree_per_hectare.",
+         "median" = "median.vtm_pinus.tree_per_hectare.")
+
+# merge all the data frames together
+quercus_v_pinus <- do.call("rbind", list(quercus, pinus))
+
+# graph of pines vs oaks
+ggplot(quercus_v_pinus, aes(x = genus, y = mean)) + 
+  geom_col(show.legend = FALSE) +
+  labs(title = "Oak and Pine Density", x = "genus", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10))
+```
+
+# By shade tolerant/intolerant - Leana, can you check this code?
+```{r}
+# Shade Tolerant species: PILA, ABCO, CADE, QUCH
+# Shade Intolerant species: PIPO, PIJE, PICO, PSMA, QUKE
+
+# Move PILA out of tolerant list!! (11/15) - hgw
+
+# unsure if this is how the final species list for shade tolerant and intolerant will look like - hgw
+
+# create a column for shade tolerant. 
+# 1 = yes, shade tolerant. 
+# 0 = no, shade intolerant
+vtm_shade <- vtm_data %>%
+  select(plotkey, abbreviation, n) %>%
+  mutate(shade_tolerant = ifelse(abbreviation %in% c("PILA",
+                                                     "ABCO",
+                                                     "CADE",
+                                                     "QUCH"), "1",
+                                 ifelse(abbreviation %in% c("PIPO",
+                                                            "PIJE",
+                                                            "PICO3",
+                                                            "PSMA",
+                                                            "QUKE"), "0", "NA"))) %>%
+  group_by(plotkey, shade_tolerant) %>%
+  tally(n)
+
+# find shade-tolerant density
+vtm_shade_tolerant <- vtm_shade %>%
+  filter(shade_tolerant == "1") %>%
+  mutate(plot_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_shade_tolerant$plot_per_hectare)
+# 152.804
+median(vtm_shade_tolerant$plot_per_hectare)
+# 105.068
+
+# find shade-intolerant density
+vtm_shade_intolerant <- vtm_shade %>%
+  filter(shade_tolerant == "0") %>%
+  mutate(plot_per_hectare = (n * (1/0.0809)))
+
+mean(vtm_shade_intolerant$plot_per_hectare)
+# 143.9117
+median(vtm_shade_intolerant$plot_per_hectare)
+# 111.2485
+
+# make dataframes 
+tolerant <- data.frame("vtm_shade_tolerant", mean(vtm_shade_tolerant$plot_per_hectare), 
+                      median(vtm_shade_tolerant$plot_per_hectare)) %>%
+  rename("tolerance" = "X.vtm_shade_tolerant.", "mean" = "mean.vtm_shade_tolerant.plot_per_hectare.",
+         "median" = "median.vtm_shade_tolerant.plot_per_hectare.")
+
+intolerant <- data.frame("vtm_shade_intolerant", mean(vtm_shade_intolerant$plot_per_hectare), 
+                      median(vtm_shade_intolerant$plot_per_hectare)) %>%
+  rename("tolerance" = "X.vtm_shade_intolerant.", "mean" = "mean.vtm_shade_intolerant.plot_per_hectare.",
+         "median" = "median.vtm_shade_intolerant.plot_per_hectare.")
+
+# combine the two data frames
+combined_tolerance <- do.call("rbind", list(tolerant, intolerant))
+
+# Graph of tolerant and intolerant densities
+ggplot(combined_tolerance, aes(x = tolerance, y = mean)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by Shade Tolerance", x = "Tolerance", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10)) 
+```
+
+# By national forest 
+```{r}
+# anf --------
+vtm_anf <- vtm_data %>%
+  select(national_forest_name, plotkey, n) %>%
+  group_by(plotkey, national_forest_name)%>% 
+  tally() %>% 
+  filter(national_forest_name == "anf") %>% 
+  mutate(anf_per_hectare = (n * (1/0.0809))) 
+
+mean(vtm_anf$anf_per_hectare)
+# 34.72835
+median(vtm_anf$anf_per_hectare)
+# 37.08282
+
+# sbnf --------
+vtm_sbnf <- vtm_data %>%
+  select(national_forest_name, plotkey, n) %>%
+  group_by(plotkey, national_forest_name)%>% 
+  tally() %>% 
+  filter(national_forest_name == "sbnf") %>% 
+  mutate(sbnf_per_hectare = (n * (1/0.0809))) 
+
+mean(vtm_sbnf$sbnf_per_hectare)
+# 29.48388
+median(vtm_sbnf$sbnf_per_hectare)
+# 24.72188
+
+# lpnf -------
+vtm_lpnf <- vtm_data %>%
+  select(national_forest_name, plotkey, n) %>%
+  group_by(plotkey, national_forest_name)%>% 
+  tally() %>% 
+  filter(national_forest_name == "lpnf") %>% 
+  mutate(lpnf_per_hectare = (n * (1/0.0809))) 
+
+mean(vtm_lpnf$lpnf_per_hectare)
+# 23.59816
+median(vtm_lpnf$lpnf_per_hectare)
+# 18.54141
+
+# cnf ---------
+vtm_cnf <- vtm_data %>%
+  select(national_forest_name, plotkey, n) %>%
+  group_by(plotkey, national_forest_name)%>% 
+  tally() %>% 
+  filter(national_forest_name == "cnf") %>% 
+  mutate(cnf_per_hectare = (n * (1/0.0809))) 
+
+mean(vtm_cnf$cnf_per_hectare)
+# 30.90235
+median(vtm_cnf$cnf_per_hectare)
+# 30.90235
+
+# create new data frame combining all national forest densities
+anf <- data.frame("anf", mean(vtm_anf$anf_per_hectare), 
+                      median(vtm_anf$anf_per_hectare)) %>%
+  rename("forest" = "X.anf.", "mean" = "mean.vtm_anf.anf_per_hectare.",
+         "median" = "median.vtm_anf.anf_per_hectare.")
+
+sbnf <- data.frame("sbnf", mean(vtm_sbnf$sbnf_per_hectare), 
+                      median(vtm_sbnf$sbnf_per_hectare)) %>%
+  rename("forest" = "X.sbnf.", "mean" = "mean.vtm_sbnf.sbnf_per_hectare.",
+         "median" = "median.vtm_sbnf.sbnf_per_hectare.")
+
+lpnf <- data.frame("lpnf", mean(vtm_lpnf$lpnf_per_hectare), 
+                      median(vtm_lpnf$lpnf_per_hectare)) %>%
+  rename("forest" = "X.lpnf.", "mean" = "mean.vtm_lpnf.lpnf_per_hectare.",
+         "median" = "median.vtm_lpnf.lpnf_per_hectare.")
+
+cnf <- data.frame("cnf", mean(vtm_cnf$cnf_per_hectare), 
+                      median(vtm_cnf$cnf_per_hectare)) %>%
+  rename("forest" = "X.cnf.", "mean" = "mean.vtm_cnf.cnf_per_hectare.",
+         "median" = "median.vtm_cnf.cnf_per_hectare.")
+
+# merge all the data frames together
+forest_density <- do.call("rbind", list(anf, sbnf, lpnf, cnf))
+
+# Graph of national forest density
+ggplot(forest_density, aes(x = forest, y = mean)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by National Forest", x = "national forest", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10)) 
+
+# Comments: i'm a little confused why cnf is so high.. Need to look into further.
+```
+
+# By elevation 
+```{r}
+# Select columns of interest and create elevation classes
+vtm_elevation <- vtm_data %>%
+  select(plotkey, elevation, abbreviation, n) %>%
+mutate(elevation_class = ifelse(elevation <= 4000, "<4000",
+              ifelse(elevation %in% c(4001:5000) , "4000-5000",
+              ifelse(elevation %in% c(5001:6000) , "5000-6000",
+                ifelse(elevation %in% c(6001:7000) , "6000-7000",
+                 ifelse(elevation %in% c(7001:8000) , "7000-8000",
+                   ifelse(elevation %in% c(8001:9000) , "8000-9000",
+                    ifelse(elevation >= 9000 , ">9000","NA")))))))) %>%
+  group_by(plotkey,elevation_class) %>% 
+  tally() %>% 
+  mutate(elevation_per_hectare = (n * (1/0.0809))) 
+
+# <4000 ------
+less_than_4000 <- vtm_elevation %>% 
+  filter(elevation_class == "<4000")
+
+mean(less_than_4000$elevation_per_hectare)
+# 24.72188
+median(less_than_4000$elevation_per_hectare)
+# 12.36094
+
+# 4000-5000 -------
+e_4000_5000 <- vtm_elevation %>% 
+  filter(elevation_class == "4000-5000")
+
+mean(e_4000_5000$elevation_per_hectare)
+median(e_4000_5000$elevation_per_hectare)
+# 31.67491
+# 24.72188
+
+# 5000-6000 -------
+e_5000_6000 <- vtm_elevation %>% 
+  filter(elevation_class == "5000-6000")
+
+mean(e_5000_6000$elevation_per_hectare)
+median(e_5000_6000$elevation_per_hectare)
+# 32.96251
+# 24.72188
+
+# 6000-7000 --------
+e_6000_7000 <- vtm_elevation %>% 
+  filter(elevation_class == "6000-7000")
+
+mean(e_6000_7000$elevation_per_hectare)
+median(e_6000_7000$elevation_per_hectare)
+# 28.91993
+# 24.72188
+
+# 7000-8000 -------
+e_7000_8000 <- vtm_elevation %>% 
+  filter(elevation_class == "7000-8000")
+
+mean(e_7000_8000$elevation_per_hectare)
+median(e_7000_8000$elevation_per_hectare)
+# 23.87909
+# 24.72188
+
+# 8000-9000 --------
+e_8000_9000 <- vtm_elevation %>% 
+  filter(elevation_class == "8000-9000")
+
+mean(e_8000_9000$elevation_per_hectare)
+median(e_8000_9000$elevation_per_hectare)
+# 21.28828
+# 24.72188
+
+# great than 9000 -------
+greater_than_9000<- vtm_elevation %>% 
+  filter(elevation_class == ">9000")
+
+mean(greater_than_9000$elevation_per_hectare)
+median(greater_than_9000$elevation_per_hectare)
+# 12.36094
+# 12.36094
+
+# create new dataframes
+total_less_4000_density <- data.frame("<4000", mean(less_than_4000$elevation_per_hectare), 
+                      median(less_than_4000$elevation_per_hectare)) %>%
+  rename("plots" = "X..4000.", "mean" = "mean.less_than_4000.elevation_per_hectare.",
+         "median" = "median.less_than_4000.elevation_per_hectare.")
+
+total_4000_5000_density <- data.frame("4000-5000", mean(e_4000_5000$elevation_per_hectare), median(e_4000_5000$elevation_per_hectare)) %>%
+  rename ("plots" = "X.4000.5000.", "mean" = "mean.e_4000_5000.elevation_per_hectare.", "median" = "median.e_4000_5000.elevation_per_hectare.")
+
+total_5000_6000_density <- data.frame("5000-6000", mean(e_5000_6000$elevation_per_hectare), median(e_5000_6000$elevation_per_hectare))%>% 
+  rename ("plots" = "X.5000.6000.", "mean" = "mean.e_5000_6000.elevation_per_hectare.", "median" = "median.e_5000_6000.elevation_per_hectare.") 
+
+total_6000_7000_density <- data.frame("6000-7000", mean(e_6000_7000$elevation_per_hectare), median(e_6000_7000$elevation_per_hectare))%>% 
+  rename ("plots" = "X.6000.7000.", "mean" = "mean.e_6000_7000.elevation_per_hectare.", "median" = "median.e_6000_7000.elevation_per_hectare.")
+
+total_7000_8000_density <- data.frame("7000-8000", mean(e_7000_8000$elevation_per_hectare), median(e_7000_8000$elevation_per_hectare))%>% 
+  rename ("plots" = "X.7000.8000.", "mean" = "mean.e_7000_8000.elevation_per_hectare.", "median" = "median.e_7000_8000.elevation_per_hectare.")
+
+total_8000_9000_density <- data.frame("8000-9000", mean(e_8000_9000$elevation_per_hectare), median(e_8000_9000$elevation_per_hectare))%>% 
+  rename ("plots" = "X.8000.9000.", "mean" = "mean.e_8000_9000.elevation_per_hectare.", "median" = "median.e_8000_9000.elevation_per_hectare.")
+
+total_greater_9000_density <- data.frame(">9000", mean(greater_than_9000$elevation_per_hectare), median(greater_than_9000$elevation_per_hectare)) %>% 
+  rename ("plots" = "X..9000.", "mean" = "mean.greater_than_9000.elevation_per_hectare.", "median" = "median.greater_than_9000.elevation_per_hectare.")
+
+# Merge all data frames
+elevation_density <- do.call("rbind", list(total_less_4000_density,
+                                           total_4000_5000_density,
+                                           total_5000_6000_density,
+                                           total_6000_7000_density,
+                                           total_8000_9000_density,
+                                           total_greater_9000_density))
+
+# dataframe that allows you to put the elevation classes in the right order
+level_order <- c("<4000", "4000-5000", "5000-6000","6000-7000","7000-8000","8000-9000", ">9000")
+
+# Graph of density by elevation
+ggplot(elevation_density, aes(x = factor(plots, level_order), y = mean)) +
+  geom_col(show.legend = FALSE) +
+  labs(title = "Tree Density by Elevation", x = "elevation (ft)", y = "trees/ha") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  size = 20,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.text.x = element_text(angle = 0, size = 10)) +
+  theme(axis.text.y = element_text(size = 10)) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     size = 10,
+                                     margin=margin(0,10,0,0)))+
+  theme(strip.text = element_text(size=10))
+
+```
+
+
+

@@ -1,0 +1,91 @@
+---
+title: "Oak Whittle"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+**This code is to create the data sheets needed to collapse the oaks recorded as more than 1 tree into a single tree. That work will have to be done manually in excel**
+
+# Packages
+```{r}
+library(tidyverse)
+library(here)
+library(janitor)
+```
+
+# Load Data
+```{r}
+# FIA 
+tree_data   <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_TREE.csv"))
+fia         <- read.csv(here("./FIA_Data/Final FIA data and code used for analysis/final_binded_fia_ypmc_data.csv")) %>% 
+  select(unique_plot) %>% 
+  distinct(.keep_all = T) # use this to bind to the oaks prelim to get just oaks in the plots we will analyze for the analysis
+
+
+# USFS FSVeg
+anf <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/ANF_FSVEG_TXPT_V.csv"))
+cnf <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/cNF_FSVEG_TXPT_V.csv"))
+lpnf <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/LPF_FSVEG_TXPT_V.csv"))
+sbnf <- read.csv(here("./FIA_Data/USFS_intensified_and_FIA_data/tree_data/BDF_FSVEG_TXPT_V.csv"))
+
+fsveg_prelim <- rbind(anf, cnf, lpnf, sbnf) %>% clean_names()
+
+```
+
+**FIA METADATA**
+most recent *metadata* version:
+https://www.fia.fs.fed.us/library/database-documentation/current/ver80/FIADB%20User%20Guide%20P2_8-0.pdf
+
+Data frame desciptions (digital pg 34) from *older metadata* https://www.fia.fs.fed.us/library/database-documentation/current/ver60/FIADB%20User%20Guide%20P2_6-0-2_final-opt.pdf
+
+
+**USFS INTENSIFIED PLOT METADATA**
+https://www.fs.fed.us/r5/rsl/projects/inventory/fsveg-tree.shtml
+
+
+# FIA Oaks
+
+## Get and Export Oaks
+
+Make separate data sheet to collapse oaks recorded as multiple trees into a single tree.
+
+This is initial work done to create the csv added above in the load data section
+```{r}
+# filter/tidy
+oaks_fia <- tree_data %>%
+  unite(unique_plot, c("COUNTYCD", "PLOT", "INVYR"), sep = "-", remove=T) %>%
+  clean_names() %>%
+  filter(dia >= 4) %>%
+  filter(spcd %in% c(805, 818)) %>% # 805 = QUCH, 818 = QUKE
+  mutate(species = case_when(
+    spcd == 805 ~ "QUCH",
+    spcd == 818 ~ "QUKE")) %>%
+  filter(statuscd == 1) %>% # keep only alive trees/remove dead trees
+  dplyr::select(unique_plot, subp, tree, azimuth, dist, dia, species)
+
+# join to get oaks just in the fia plots used in our analysis
+oaks_join <- inner_join(fia, oaks_fia, by = "unique_plot")
+
+# export to manually group oaks
+#write.csv(oaks_join, here("./FIA Data/Oak Analysis/fia_analysis oaks join.csv"), row.names = F)
+
+```
+dist units = feet
+
+
+# FSVEG Data
+
+```{r}
+oaks_fsveg <- fsveg_prelim %>% 
+  filter(dbhi >= 4) %>% 
+  filter(spec %in% c("QUCH2", "QUKE")) %>% 
+  filter(lvdd == "L") %>% # keep alive trees/remove dead trees
+  select(plot, tree, tcnt, spec, dbhi)
+```
+
+columns that coule be helpful
+
+- tcnt: treecount --> only has values of 1 :(

@@ -1,0 +1,180 @@
+---
+title: "FIA Tree Missing Data Analysis"
+author: "Jennifer Truong"
+date: "10/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+# Attach packages ----
+
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(kableExtra)
+library(lubridate)
+library(here)
+
+```
+
+```{r}
+# Read in data ----
+
+# Angeles NF
+anf_fia <- read_csv(here("R", "fia_data_observation", "tree_data", "ANF_FSVEG_TXPT_V.csv")) %>% 
+  clean_names() %>%  # Clean names
+  rename("species" = "spec") %>% # Rename species column
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  ) 
+
+# Cleveland NF
+cnf_fia <- read_csv(here("R", "fia_data_observation", "tree_data", "CNF_FSVEG_TXPT_V.csv")) %>% 
+  clean_names() %>%  # Clean names
+  rename("species" = "spec") %>% # Rename species column
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+) 
+
+# Los Padres NF
+lpf_fia <- read_csv(here("R", "fia_data_observation", "tree_data", "LPF_FSVEG_TXPT_V.csv")) %>% 
+  clean_names() %>%  # Clean names
+  rename("species" = "spec") %>% # Rename species column
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+)
+
+# San Bernardino NF
+bdf_fia <- read_csv(here("R", "fia_data_observation", "tree_data", "BDF_FSVEG_TXPT_V.csv")) %>% 
+  clean_names() %>%  # Clean names
+  rename("species" = "spec") %>% # Rename species column
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+)
+
+# Additional notes ----
+
+# To clean ddate column as actual dates, split column into two and have last four digits as year by using separate()
+# Troubleshooting help: https://tidyr.tidyverse.org/reference/separate.html
+
+```
+
+### ANF Missing Data
+
+```{r Counting NA Values}
+# Observing NA values for ANF ----
+# Total Count of NA values - 80259
+anf_na <- n_miss(anf_fia)
+# Total Count of complete values - 194861
+anf_complete <- n_complete(anf_fia)
+# Percentage of NA values - 29.17%
+anf_na_pct <- pct_miss(anf_fia)
+# Summary of NA values
+anf_na_summ <- miss_var_summary(anf_fia)
+# Turn summary table into kableExtra table
+anf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) #%>% 
+  #scroll_box(width = "300px", height = "300px")
+# Note #1: NCNT has 0 NA values here...does that mean those 0's represent 0's or are some of them NA values?
+# Note #2: This summary would be more or less the same for the other forests.
+# Summary of NA values by observations (rows)
+anf_na_summ_row <-  miss_case_table(anf_fia)
+```
+
+### CNF Missing Data
+
+```{r}
+# Observing NA values for CNF ----
+# Total Count of NA values - 55371
+cnf_na <- n_miss(cnf_fia)
+# Total Count of complete values - 131989
+cnf_complete <- n_complete(cnf_fia)
+# Percentage of NA values - 29.55%
+cnf_na_pct <- pct_miss(cnf_fia)
+# Summary of NA values
+cnf_na_summ <- miss_var_summary(cnf_fia)
+cnf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) #%>% 
+  #scroll_box(width = "300px", height = "300px")
+# Summary of NA values by observations (rows)
+cnf_na_summ_row <-  miss_case_table(cnf_fia)
+```
+
+### LPF Missing Data
+
+```{r}
+# Observing NA values for LPF ----
+# Total Count of NA values - 246437
+lpf_na <- n_miss(lpf_fia)
+# Total Count of complete values - 565323
+lpf_complete <- n_complete(lpf_fia)
+# Percentage of NA values - 30.36%
+lpf_na_pct <- pct_miss(lpf_fia)
+# Summary of NA values
+lpf_na_summ <- miss_var_summary(lpf_fia)
+lpf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) #%>% 
+  #scroll_box(width = "300px", height = "300px")
+# Summary of NA values by observations (rows)
+lpf_na_summ_row <-  miss_case_table(lpf_fia)
+```
+
+### BDF Missing Data
+
+```{r}
+# Observing NA values for BDF ----
+# Total Count of NA values - 145939
+bdf_na <- n_miss(bdf_fia)
+# Total Count of complete values - 345021
+bdf_complete <- n_complete(bdf_fia)
+# Percentage of NA values - 29.72%
+bdf_na_pct <- pct_miss(bdf_fia)
+# Summary of NA values
+bdf_na_summ <- miss_var_summary(bdf_fia)
+bdf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) #%>% 
+  #scroll_box(width = "300px", height = "300px")
+# Summary of NA values by observations (rows)
+bdf_na_summ_row <-  miss_case_table(bdf_fia)
+```
+
+## Summary of NA Statistics
+
+```{r Summary of NA statistics}
+# Combining NA stats together in one df ----
+# Create vectors
+nf_name <- c("ANF", "CNF", "LPF", "BDF")
+nf_na <- c(anf_na, cnf_na, lpf_na, bdf_na)
+nf_complete <- c(anf_complete, cnf_complete, lpf_complete, bdf_complete)
+nf_na_pct <- c(anf_na_pct, cnf_na_pct, lpf_na_pct, bdf_na_pct)
+# Combine vectors into data frame
+na_df <- tibble(nf_name, nf_na, nf_complete, nf_na_pct)
+# Turn data frame into kable table for a neater look
+na_df %>% 
+  kable(digits = 2) %>% # Keep deimal points to two places
+  kable_styling(latex_options = "striped",
+                full_width = F)

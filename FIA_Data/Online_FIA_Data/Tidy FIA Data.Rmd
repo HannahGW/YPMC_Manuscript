@@ -1,0 +1,406 @@
+---
+title: "Tidy FIA_Data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***Purpose of this code is to wrangle raw FIA_Data (from the online website, NOT from the USFS intensified plots provided by the Remote Sensing Lab) for the 2020-2021 Bren Master's Project. Code will be reproducible so others in the future can edit the code for their specific uses.***
+
+# Packages
+```{r}
+library(sf)
+library(sp)
+library(tidyverse)
+library(janitor)
+library(here)
+```
+
+# Load data
+
+There are 60 FIA_Datasheets, however some are blank. 7 were deemed to have information that is relevant to the Bren analysis (see below the code chunk for description of these data sheets)
+
+most recent *metadata* version:
+https://www.fia.fs.fed.us/library/database-documentation/current/ver80/FIADB%20User%20Guide%20P2_8-0.pdf
+
+Data frame desciptions (digital pg 34) from *older metadata* https://www.fia.fs.fed.us/library/database-documentation/current/ver60/FIADB%20User%20Guide%20P2_6-0-2_final-opt.pdf
+```{r}
+options(scipen=10000) # remove scientific notation setting
+
+################################## Raw FIA_Data ###################################
+# see below for descriptions on the following data frames
+
+plot_coords      <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_PLOT.csv"))
+condition_data   <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_COND.csv"))
+tree_data        <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_TREE.csv"))
+seedling_data    <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_SEEDLING.csv")) 
+microplot_data   <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_DWM_MICROPLOT_FUEL.csv"))
+subplot_spp_data <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_P2VEG_SUBPLOT_SPP.csv")) 
+subplot_struc_data <- read.csv(here("./FIA_Data/Online_FIA_Data/2001_2018_Raw_FIA_Data/CA_P2VEG_SUBP_STRUCTURE.csv")) # Provides percent cover by layer by growth habit. 
+
+############################### Southern California YPMC Polygons ###############################
+
+ypmc_buffer <- read_sf(here::here("ArcGIS data", "ypmc buffer", "ypmc_sbnf_750m_buffer.shp")) %>%
+  st_transform(4326) # ypmc polygons from calveg
+
+################################ Transverse and Peninsular Ranges polygons ######################
+
+mtn <- st_read(here::here("ArcGIS data", "Mtn_Ranges", "Mtn_Ranges.shp")) %>%
+  st_transform(crs = 4326) %>%
+  select(-Id) # shapefile with rough, manually drawn border of the transverse and peninsular ranges (our assessment area)
+
+```
+not sure the difference between subplot ssp and subplot structure dfs. They have the sme info but one has a lot more rows...Think thy both contain information on shrub cover though. 
+
+
+
+*CA_PLOT*:  Provides information relevant to the entire 1-acre field plot. This table
+links to most other tables, and the linkage is made using PLOT.CN =
+TABLE_NAME.PLT_CN 
+
+*CA_COND*:  Provides information on the discrete combination of landscape attributes that define the condition (a condition will have the same land class, reserved status, owner group, forest type, stand-size class, regeneration status, and stand density).
+
+*CA_TREE*:  Provides information for each tree 1 inch in diameter and larger found on a microplot, subplot, or core optional macroplot.
+
+*CA_SEEDLING*: Provides a count of the number of live trees of a species found on a microplot that are less than 1 inch in diameter but at least 6 inches in length for conifer species or at least 12 inches in length for hardwood species.
+
+*CA_P2VEG_SUBPLOT_SPP*: Provides percent cover data of vegetation species identified on the subplot.
+
+*CA_P2VEG_SUBP_STRUCTURE*: Provides percent cover by layer by growth habit. 
+
+*CA_DWM_MICROPLOT_FUEL*: Provides information on the fuel loads (shrubs and herbs) measured on the microplot.
+
+*CA_POP_STRATUM.csv* has a column thta labels a plot as forested or non forested or wilderness, however there are no plot numbers in the data and nothing I can use to link the data to the other data frames :/ 
+
+# Tidy and Join datasheets
+
+There are MANY columns in these dataframes. After sifting through the metadata we selected the ones that potentially contained information that could be relevant to our project. 
+```{r}
+######################################### filtered plot data ######################################### 
+plot_coords_filtered <- plot_coords %>% 
+  unite(unique_plot, c("COUNTYCD", "PLOT", "INVYR"), sep = "-", remove=F) %>% # create unique identifier for each plot that is comprised of the countyID, plot number, and inventory year. This will be used to link information from the different data sheets and ensures data from plots that have been surveyed more than once are not mixed up
+  unite(survey_date, c ("MEASMON", "MEASDAY", "MEASYEAR"), sep = "-", remove = F) %>% 
+  filter(LAT < 36) %>% # only keep plots below approx San Luis Obispo for faster processing
+  select(unique_plot, COUNTYCD, CN, INVYR, survey_date, PLOT_STATUS_CD, PLOT_NONSAMPLE_REASN_CD, REMPER, DESIGNCD, LAT, LON, ELEV, P2PANEL, P3PANEL, MANUAL, QA_STATUS, MICROPLOT_LOC, EMAP_HEX, SAMP_METHOD_CD, SUBP_EXAMINE_CD, MACRO_BREAKPOINT_DIA, INTENSITY, CYCLE, SUBCYCLE, TOPO_POSITION_PNW, NF_SAMPLING_STATUS_CD, NF_PLOT_STATUS_CD, NF_PLOT_NONSAMPLE_REASN_CD, P2VEG_SAMPLING_STATUS_CD, P2VEG_SAMPLING_LEVEL_DETAIL_CD, INVASIVE_SAMPLING_STATUS_CD, SUBPANEL) %>% 
+  clean_names()
+
+################################# filtered and tidied condition data #################################### 
+condition_data_filtered <- condition_data %>% 
+  clean_names() %>% 
+  unite(unique_plot, c("countycd", "plot", "invyr"), sep = "-", remove=F) %>%
+  select(unique_plot, plt_cn, owngrpcd, adforcd, reservcd, fortypcd, stdszcd, stdorgcd, slope, aspect, dstrbcd1, dstrbcd2, dstrbcd3, trtcd1, fire_srs, canopy_cvr_sample_method_cd, land_cover_class_cd) %>% 
+  distinct(.keep_all=T) %>% # there are some duplicate rows/plots
+  mutate(admin_forest = case_when(
+    adforcd == "501" ~ "ANF",
+    adforcd == "502" ~ "CNF",
+    adforcd == "512" ~ "SBNF",
+    adforcd == "507" ~ "LPNF",
+    TRUE ~ "Not NF or other NF"
+  )) %>% 
+  mutate(jurisdiction = case_when(
+    owngrpcd %in% c("10", "20") ~ 'Forest Service/Federal',
+    owngrpcd == "30" ~ "State/Local Gov",
+    owngrpcd == "40" ~ "Private"
+  ))
+
+# NFs
+condition_data_NFs <- condition_data_filtered %>% 
+  select(unique_plot, admin_forest) %>% 
+  filter(!is.na(admin_forest)) %>%  
+  distinct(.keep_all=T) # remove duplicates
+
+# all plot jurisdictions: keep them collapsed since some plots (ex/ the ones in san jacinto) have multiple jurisdictions 
+condition_data_jursidiction <- condition_data_filtered %>% 
+  select(unique_plot, jurisdiction) %>% 
+  distinct(.keep_all=T) %>% # remove duplicates
+  group_by(unique_plot) %>% 
+  summarize(jurisdiction = paste(jurisdiction, collapse = " -&- "))
+
+# wilderness
+condition_data_wilderness <- condition_data_filtered %>% 
+  select(unique_plot, reservcd) %>% 
+  distinct(.keep_all=T) %>% 
+  filter(!is.na(reservcd)) %>% 
+  mutate(reserved = case_when(
+    reservcd == "0" ~ "Not Reserved/Wilderness",
+    reservcd == "1" ~ "Reserved/Wilderness"
+  )) %>% 
+  group_by(unique_plot) %>% 
+  summarize(reserved = paste(reserved, collapse = " | "))
+
+# slope
+condition_data_slope <- condition_data_filtered %>% 
+  select(unique_plot, slope) %>% 
+  filter(!is.na(slope)) %>% 
+  group_by(unique_plot) %>% 
+  summarise(slope_avg = mean(slope)) # some plots ahve multiple recordings for slope but there is no subplot to account for this, so just took the average
+
+# aspect
+condition_data_aspect <- condition_data_filtered %>% 
+  select(unique_plot, aspect) %>% 
+  filter(!is.na(aspect)) %>% 
+  mutate(aspect_qualitative = case_when(
+    aspect <= 0 ~ "Flat",
+    aspect <= 22.5 ~ "N",
+    aspect <= 67.5 ~ "NE",
+    aspect <= 112.5 ~ "E",
+    aspect <= 157.5 ~ "SE",
+    aspect <= 202.5 ~ "S",
+    aspect <= 247.5 ~ "SW",
+    aspect <= 292.5 ~ "W",
+    aspect <= 337.5 ~ "NW",
+    aspect <= 360 ~ "N"
+  )) %>% 
+  group_by(unique_plot) %>% 
+  summarize(aspect = paste(aspect, collapse = "-"),
+            aspect_qualitative = paste(aspect_qualitative, collapse = "-")) # did this instead of taking the average, bc cannot take avg aspect since it is a circular relative index (ie aspect 1 and 360=same aspect). So just combined rows with multuple aspects and if we end up having plots with those multiple aspects we can use the usfs values, convert aspect to a relative index, or something else. 
+
+# disturbance
+condition_data_disturbance <- condition_data_filtered %>% 
+  select(unique_plot, dstrbcd1, dstrbcd2, dstrbcd3) %>% 
+  filter(dstrbcd1 %in% c('30', '31', '32') | dstrbcd2 %in% c('30', '31', '32') | dstrbcd3 %in% c('30', '31', '32')) %>% 
+  mutate(recorded_fire_damage = "Yes") %>% 
+  select(unique_plot, recorded_fire_damage) %>% 
+  distinct(.keep_all = T)
+
+# combine condition data into a single df (theres a function in plyr that has all_join or something like that but that package conflicts with a lot fo the dplyr functions)
+join1 <- full_join(condition_data_NFs, condition_data_jursidiction, by = "unique_plot")
+join2 <- full_join(join1, condition_data_wilderness, by = "unique_plot")
+join3 <- full_join(join2, condition_data_slope, by = "unique_plot")
+join4 <- full_join(join3, condition_data_aspect, by = "unique_plot")
+condition_data_all_join <- full_join(join4, condition_data_disturbance, by = "unique_plot")
+
+##########################################  filtered tree data ######################################### 
+tree_data_filtered <- tree_data %>% 
+  unite(unique_plot, c("COUNTYCD", "PLOT", "INVYR"), sep = "-", remove=F) %>% 
+  select(unique_plot,SUBP, PLT_CN, UNITCD, TREE, CONDID, PREVCOND, STATUSCD, SPCD, SPGRPCD, DIA, HT, HTCD, ACTUALHT, CR, CCLCD, CDENCD, UNCRCD, AGENTCD, DIACHECK, BHAGE, TOTAGE) %>% 
+  clean_names()
+
+##########################################  filtered seedling data ######################################
+
+# info used for our species distribution model
+seedling_data_filtered <- seedling_data %>% 
+  clean_names() %>% 
+  unite(unique_plot, c("countycd", "plot", "invyr"), sep = "-", remove=F) %>%
+  select(unique_plot, plt_cn, subp, invyr, condid, spcd, spgrpcd, treecount, totage, treecount_calc, tpa_unadj) %>% 
+  mutate(species = case_when(
+    spcd == "122" ~ "PIPO",
+    spcd == "116" ~ "PIJE",
+    spcd == "117" ~ "PILA",
+    spcd == "15" ~ "ABCO",
+    spcd == "81" ~ "CADE",
+    spcd == "201" ~ "PSMA",
+    spcd == "109" ~ "PICO",
+    spcd == "818" ~ "QUKE",
+    spcd == "805" ~ "QUCH",
+    spcd == "108" ~ "P. contorta"
+  ))
+
+#######################################  filtered sub plot spp data #################################### 
+subplot_spp_data_filtered <- subplot_spp_data %>%
+  unite(unique_plot, c("COUNTYCD", "PLOT", "SUBP", "INVYR"), sep = "-", remove=F) %>% 
+  select(unique_plot, SUBP, CONDID, VEG_FLDSPCD, VEG_SPCD, GROWTH_HABIT_CD, LAYER, COVER_PCT) %>% 
+  clean_names()
+  
+#################################### filtered sub plot structure data #################################### 
+subplot_structure_data_filtered  <- subplot_struc_data %>% 
+  unite(unique_plot, c("COUNTYCD", "PLOT", "SUBP", "INVYR"), sep = "-", remove=F) %>% 
+  select(unique_plot, CONDID, GROWTH_HABIT_CD, LAYER, COVER_PCT) %>% 
+  clean_names()
+
+#######################################  filtered microplot data #################################### 
+microplot_data_filtered <- microplot_data %>% 
+  unite(unique_plot, c("COUNTYCD", "PLOT", "SUBP", "INVYR"), sep = "-", remove=F) %>% 
+  select(unique_plot, LVSHRBCD, LVSHRBHT)%>% 
+  clean_names()
+
+```
+
+In each of the 7 data frames, I went through each column header in the FIA metadata (https://www.fia.fs.fed.us/library/database-documentation/current/ver60/FIADB%20User%20Guide%20P2_6-0-2_final-opt.pdf) and only kept the columns that 1) were essential for the completion of the NRV topics, and 2) may provide useful information about the condition of the plots. Additionally, county code, plot code, and year were combined into a single column to make a unique plot code. 1990s data had multiple plots with the same plot #, but different county codes and 2000-2018 plots had unique plot number (unlike the 1990s data), but because some plots were surveyed twice in the almost 2 decades it looked like they were being counted twice. 
+
+In the plot df, which contains the coordinates, only plots with a latitude below 36 degrees were kept, which is slightly above San Luis Obispo. 
+
+The latter 3 microplot and subplot df potentially contain information on shrubs
+
+At the time of the Bren project, FIA_Data was available from 1991-1994, 2001-2018. A lot of the 90s data does not have coordinates though so I will have to remove them when I create a shapefile (otherwise get an error). There is also the (mostly) complete set of 90s data availble in the G drive which was available from: https://www.fs.usda.gov/pnw/tools/pnw-idb-periodic-inventory-database
+
+Didnt end up using shrub data from the raw FIA_Data in our anlaysis because it would have been too much work to tidy adn figure out what the remote sensing lab did to wrangle the data and then replicate that work
+
+Think plot codes and coordinates are different for the 1990s data and the 2000s data. Ploted them adn many did not overlap. Wonder if this is because of the fuzzing? Or plots were added for surveying in the 2000s? Either way, not using 1990s data because it is an incomplete record of data (only avaialble from 1994-2000) and because we don't want to accidently double count data from the same plots. 
+
+
+# Tree data 
+
+join plot and tree data then just include columns needed to complete the analysis for the nrv topics (shrubs are not included, just tree data)
+```{r}
+############################ join individual tree data and plot data ###########################
+
+#join plot and plot condition data 
+ plot_condition_join <- left_join(plot_coords_filtered, condition_data_all_join, by = "unique_plot") # total unique plots in this df and the plot coords filtered df = 13,675
+
+# join plot/condition data with individual tree data 
+plot_tree_join <- inner_join(tree_data_filtered, plot_condition_join, by = "unique_plot") # tree_data_filtered has 11,861 unique plots; plot_tree_join has 1,244 unique plots, so there are only 1,244 plots with tree data in southern california (there's actually less plots we can use for our analysis since some of these plots were surveyed in both 2000s and 2010s)
+
+############################ set coordinate system ############################ 
+plot_tree_join_sf <- st_as_sf(plot_tree_join, coords = c("lon", "lat"), crs = 4326, remove=F) 
+
+############################ clip plot data to Mtn ranges ############################ 
+#this will add the transverse and peninsualr mtnr ranges to the df as a column. Will also remove plots not inside the mtn ranges (e.g. these are plots outside of our assessment area)
+
+tree_mtn <- st_intersection(plot_tree_join_sf, mtn) #762 plots
+
+#write.csv(tree_mtn, here::here("/FIA_Data/Online_FIA_Data/output datasheets/unbuffered_unfiltered_fia_data.csv"), row.names=F)
+
+############################ clip plot data to ypmc buffer (750m) ############################ 
+
+# intersect
+plot_tree_join_buffer <- st_intersection(tree_mtn, ypmc_buffer) # 206 plots (NOTE: not all plots that have been removed contain ypmc species)
+
+# need to remove these columns so removing duplicaterows below works
+plot_tree_join_buffer_tidy <- plot_tree_join_buffer %>% 
+  #dplyr::distinct(.keep_all = T) %>% # for some reason this removed like 70 plots. Never had an issue with this code doing that before. The code below worked correctly. 
+  dplyr::select(-OBJECTID, -Id, -BUFF_DIST, -ORIG_FID, -Shape_Leng, -Shape_Area) 
+
+# remove duplicate observations
+plot_tree_buffer_tibble <- as_tibble(plot_tree_join_buffer_tidy)
+plot_tree_join_buffer_tidy2 <- plot_tree_buffer_tibble[!duplicated(plot_tree_buffer_tibble), ]
+
+# check
+unique(plot_tree_join_buffer$unique_plot) #206 plots
+unique(plot_tree_join_buffer_tidy2$unique_plot) # 206 plpots!
+
+#write.csv(plot_tree_join_buffer_tidy2, here::here("/FIA_Data/Online_FIA_Data/output datasheets/buffered_unfiltered_fia_data.csv"), row.names=F)
+
+#############################  data needed for NRV topics ############################ 
+
+nrv_tree_data <- plot_tree_join_buffer_tidy2 %>% 
+  mutate(species = case_when(
+    spcd == "122" ~ "PIPO",
+    spcd == "116" ~ "PIJE",
+    spcd == "117" ~ "PILA",
+    spcd == "15" ~ "ABCO",
+    spcd == "81" ~ "CADE",
+    spcd == "201" ~ "PSMA",
+    spcd == "109" ~ "PICO",
+    spcd == "818" ~ "QUKE",
+    spcd == "805" ~ "QUCH",
+    TRUE ~ "Other"
+  )) %>% 
+  filter(species != "Other") %>% # remove species that are not our target nrv species. 
+  mutate(temp = case_when(
+    species %in% c('PSMA', 'PICO', 'QUKE', 'QUCH') ~ "0",
+    TRUE ~ "1"
+  )) %>% 
+  mutate(temp = as.numeric(temp)) %>% 
+  group_by(unique_plot) %>% 
+  mutate(all_plot_species2 = sum(temp)) %>% 
+  filter(all_plot_species2 != 0) %>% # cheaters way to remove plots that only contain psma and/or pico and/or quch/quke.
+  ungroup(unique_plot) %>% 
+  filter(statuscd == 1) %>% # keep only alive trees/remove dead trees (do this after remove psma/pico/oaks)
+  select(unique_plot, subp, survey_date, species, dia, ht, elev, aspect, aspect_qualitative, slope_avg, admin_forest, jurisdiction, Range, reserved, recorded_fire_damage, cr, uncrcd, cclcd, cdencd, lat, lon)
+
+# export csv
+write.csv(nrv_tree_data, here::here("./FIA_Data/Online_FIA_Data/output datasheets/all_nrv_tree_data.csv"), row.names = F)
+
+# #convert to shapefile 
+# nrv_tree_data_sf <- st_as_sf(nrv_tree_data, coords = c("lon", "lat"), crs = 4326)
+# st_write(nrv_tree_data_sf, here::here("./FIA_Data/Online_FIA_Data/output shapefiles/final_fia_nrv_data.shp"))
+
+
+```
+
+after removing plpots with only species outside of our NRV species of interest, there are still some unnamed with our YMPC. some of these include:
+
+133 = pinyon pine
+815 = quercus garryana
+127 = gray pine
+801 = q. agrifolia
+839 = q. wislizeni
+540 = Fraxinus spp
+730 = CA sycamore
+475 = cercocarpus ledifolius
+
+would have liked to keep plt_cn column
+
+plot tree join sf=19930 rows and 1244 unique plots; test=12135 and 762 plots; plot tree join buffer = 16043 and 206 plots; nrv tree data=124 plots
+
+
+
+# Seedling/Microplot Data
+
+## join seedling and plot data
+```{r}
+#############################  further filter plot data ############################ 
+plot_coords_filtered2 <- plot_coords_filtered %>% 
+  select(unique_plot, lat, lon)
+
+#############################  join seedling and plot data ############################ 
+seedling_plot_join <- inner_join(seedling_data_filtered, plot_coords_filtered2, by ='unique_plot') %>% # there are only 7784 plots with seedling data
+  filter(!is.na(lat)) # remove plots with no coordaintes (otherwise get an error when export to shapefile
+
+
+############################### export csv ############################### 
+### uncomment code below to export seedling data. This information was not used to compare historic and contemporary conditions, but it was used in our species distribution model
+
+#write.csv(seedling_plot_join, here::here("/FIA_Data/Online_FIA_Data/output datasheets/seedling_plot_df.csv"), row.names = F) 
+
+# ############################### make shapefile ############################### 
+# # define columns witht he coordinates and define the coordinate system
+#data_sf <- st_as_sf(seedling_plot_join, coords = c("lon", "lat"), crs = 32611)
+#  
+# # convert to shapefile
+# st_write(data_sf, here::here("/FIA_Data/Online_FIA_Data/output shapefiles/seedling_plot_data.shp"))
+
+```
+
+
+## tidy seedling/sapling micoplot data
+
+```{r}
+############################ set coordinate system ############################ 
+plot_seedling_join_sf <- st_as_sf(seedling_plot_join, coords = c("lon", "lat"), crs = 4326, remove=F) 
+
+############################ clip plot data to Mtn ranges ############################ 
+#this will add the transverse and peninsualr mtnr ranges to the df as a column. Will also remove plots not inside the mtn ranges
+
+seedling_mtn <- st_intersection(plot_seedling_join_sf, mtn)
+
+#write.csv(seedling_mtn, here::here("/FIA_Data/Online_FIA_Data/output datasheets/unbuffered_unfiltered_fia_saplings_data.csv"), row.names=F)
+
+############################ clip plot data to ypmc buffer (750m) ############################ 
+
+# intersect
+plot_seedling_join_sf_buffer <- st_intersection(seedling_mtn, ypmc_buffer)
+
+# nned to remove these columns so removing duplicaterows below works
+plot_seedling_join_sf_buffer_tidy <- plot_seedling_join_sf_buffer %>% 
+  dplyr::select(-OBJECTID, -Id, -BUFF_DIST, -ORIG_FID, -Shape_Leng, -Shape_Area) 
+
+# remove duplicate observations
+plot_seedling_join_sf_buffer_tidy_tibble <- as_tibble(plot_seedling_join_sf_buffer_tidy)
+plot_seedling_join_sf_buffer_tidy_tibble_tidy2 <- plot_seedling_join_sf_buffer_tidy_tibble[!duplicated(plot_seedling_join_sf_buffer_tidy_tibble), ]
+
+# check
+unique(plot_seedling_join_sf_buffer$unique_plot) #98 plots
+unique(plot_seedling_join_sf_buffer_tidy_tibble$unique_plot) # 98 plots!
+
+#write.csv(plot_seedling_join_sf_buffer_tidy_tibble, here::here("/FIA_Data/Online_FIA_Data/output datasheets/buffered_unfiltered_fia_saplings_data.csv"), row.names=F)
+#############################  further filter seedling data ############################ 
+# this is to reduce the columns bc joining this df with the buffered nrv tree data
+
+seedling_join_filter <- plot_seedling_join_sf_buffer_tidy_tibble_tidy2 %>% 
+  filter(!is.na(species),
+         species != "P. contorta") %>% # remove rows without our species of interest
+  select(-treecount, -totage, -plt_cn) %>% 
+  tidyr::uncount(treecount_calc) %>% 
+  st_as_sf() %>% 
+  st_drop_geometry()
+
+#write.csv(seedling_join_filter, here::here("/FIA_Data/Online_FIA_Data/output datasheets/fia_socal_ypmc_seedlings.csv"), row.names = F)
+
+```
+remove tot_age bc had all null values >_<
+
+

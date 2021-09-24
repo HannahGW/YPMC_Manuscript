@@ -1,0 +1,63 @@
+---
+title: "Example Code for Report"
+author: "Hannah Garcia-Wickstrum"
+date: "01/24/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+# Total FIA tree density
+# wrangle data
+fia_data <- fia_data_species %>% 
+  group_by(plotkey)%>% 
+  tally(n)
+# n = total number of trees (ypmc > 4 inches) in the plot
+##------------------------------------------------------------------------------------
+
+# multiply n by (1/.067245) to convert to trees/hectare instead of trees/.06725 hecare
+fia_density<- fia_data %>% 
+  mutate(tree_per_hectare = (n * (1/0.067245)))
+
+# find the average of trees_per_hectare column
+mean(fia_density$tree_per_hectare)
+median(fia_density$tree_per_hectare)
+# mean 367.3136
+# median 327.1619
+
+```
+
+```{r}
+
+# Total VTM tree density
+# wrangle data
+vtm_data_select <- vtm_data %>% 
+  select(plotkey, n) %>% 
+  group_by(plotkey) %>% 
+  tally(n) 
+##------------------------------------------------------------------------------------
+
+# multiply n by (1/.0809) to convert to trees/hectare instead of trees/.08 hecare
+vtm_data_hecare <- vtm_data_select %>% 
+  mutate(tree_per_hectare = (n * (1/0.0809)))
+
+
+# find the average of trees_per_hectare column
+mean(vtm_data_hecare $tree_per_hectare)
+median(vtm_data_hecare $tree_per_hectare)
+# mode 225.7438
+# median 173.0532
+```
+
+
+
+
+
+
+
+
+

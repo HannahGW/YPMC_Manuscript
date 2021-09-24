@@ -1,0 +1,1788 @@
+---
+title: "Basal Area"
+author: "AMP and Jen"
+date: "11/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(tidyr)
+library(ggpubr)
+library(janitor)
+library(here)
+```
+
+# Data
+```{r, message=F, warning=F}
+vtm <- read_csv(here("./vtm_data/vtm_dataset_750m_buffer_FINAL.csv"))
+fia <- read.csv(here("./FIA Data/Final FIA data and code used for analysis/final_binded_fia_ypmc_data.csv")) 
+
+fia_unfiltered <- read.csv(here("./FIA Data/Online_FIA_Data/output datasheets/buffered_unfiltered_fia_data.csv")) # use this in crease sample size of the oaks adn pico when determining the ideal midpoint for the largest ssize class
+usfs_unfiltered <- read_csv(here("./FIA Data/USFS_intensified_and_FIA_Data/all_nfs_fia_final.csv"))
+```
+
+# Tidy Data 
+
+trees in fia data with dbh < 4in are removed from the analysis in later code chunks 
+```{r}
+########################################## VTM ##############################################
+vtm_tidy <- vtm %>% 
+  dplyr::select(-species) %>% 
+  dplyr::rename(species = abbreviation) %>% 
+  pivot_longer('dbh_4_11':'dbh_36',
+               names_to = "dbh_class",
+               values_to = "dbh_count") %>% 
+  filter(dbh_count != 0) %>% # get error when use uncount() and there are rows with a value of 0
+  tidyr::uncount(dbh_count) %>% 
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine"),
+         species = str_replace(species, pattern = "PICO3", "PICO")) %>% # change pico3 to pico 
+  mutate(species = fct_relevel(species, levels =c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE"))) %>% 
+  mutate(elev_m = elevation/3.281) %>% 
+   mutate(elevation_class = case_when(
+    elev_m < 500 ~ "0-500",
+    elev_m <= 1000 ~ "500-1,000",
+    elev_m <= 1500 ~ "1,000-1,500",
+    elev_m <= 2000 ~ "1,500-2,000",
+    elev_m <= 2500 ~ "2,000-2,500",
+    elev_m >= 2500 ~ "2,500+"
+  )) %>% 
+  mutate(elevation_class = as.factor(elevation_class),
+         elevation_class = fct_relevel(elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+")))%>% 
+  mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Fire Tolerant/Shade Intolerant",
+    species %in% c("ABCO", "CADE") ~ "Fire Intolerant/Shade Tolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) 
+
+########################################## FIA ##############################################
+fia_tidy <- fia %>% 
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine")) %>% 
+ mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Fire Tolerant/Shade Intolerant",
+    species %in% c("ABCO", "CADE") ~ "Fire Intolerant/Shade Tolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(elevation_class = case_when(elev <= 1500 ~ "1,000-1,500",
+                                     elev <= 2000 ~ "1,500-2,000",
+                                     elev <= 2500 ~ "2,000-2,500",
+                                     elev >= 2500 ~ "2,500+")) 
+
+# fct_relevel wouldn't work properly in mutate() for these two variables in fia data
+fia_tidy$species <- factor(fia_tidy$species, levels= c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE")) 
+fia_tidy$elevation_class <- factor(fia_tidy$elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+"))
+  
+```
+
+
+# Compare FIA data
+
+need to find range for largest dbh size class so can use the midpoint. Compare binned vs unbinned fia data to ensure it is responsible to use binned data adn that there is no systemic bais
+
+
+## Find Max DBH per Species
+```{r}
+# keep only trees in the largest dbh class
+dbh_large <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(dbh >= 91.44, 
+         dbh <= 228) # remove largest cade which is an outlier
+
+# find sumary stats of each species in the largest dbh class
+large_dbh_summary <- dbh_large %>% 
+  group_by(species) %>% 
+  dplyr::summarise(max = max(dbh),
+                   max_10 = max - max*0.1,
+                   median = median(dbh),
+                   mean = mean(dbh),
+                   sd = sd(dbh),
+                   #mean_plus_sd = mean + sd,
+                   se = sd((dbh) / sqrt(n())))
+
+# pivot data so can plot it and visaulzie data spread
+dbh_summary_pivot <- large_dbh_summary %>% 
+  pivot_longer(max:se,
+               names_to = "summary_stat",
+               values_to = "values")
+
+# plot
+ggplot(dbh_summary_pivot, aes(x = summary_stat, y=values)) + 
+  geom_col()+
+  facet_wrap(~species, scales="free_x") +
+  geom_text(aes(label=round(values, 0), x = summary_stat), 
+            position=position_dodge(width = 0.9), 
+            vjust = -0.9) +
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA)) +
+  scale_y_continuous(lim=c(0,200))
+
+ggplot(dbh_large, aes(x=dbh)) + 
+  geom_histogram() + 
+  facet_wrap(~species, scale = "free_y") +
+  labs(x = "DBH (cm)", title = "Distribution of d.b.h. in the Largest Size Class", y="") +
+  theme_bw()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))
+
+# No SD or SE for QUKE for some reason - Jen --> bc the sample size is 1 (amp)
+
+```
+abco, pije, cade, psma, and pila are very right skewed, so maybe we shoudl pick the mean?
+
+pico, pipo, quch, adn quke have a relatively even distribution so the max would be okay to use?
+
+cade has that very large outlier, so def should not use the max
+
+max 10 = the maximum dbh decreased by 10% (Bouldin 1999)
+
+pije and pipo had VERY similar summary stats, usually off by 1-2 inches
+
+## Max dbh of oaks/pico
+
+using the unfiltered data bc the sample size of the ypmc filtered data is too small
+```{r}
+max2 <- fia_unfiltered %>% 
+  filter(!is.na(dia)) %>% 
+  filter(dia >= 36) %>% 
+  mutate(species = case_when(
+    spcd == "109" ~ "PICO",
+    spcd == "818" ~ "QUKE",
+    spcd == "805" ~ "QUCH",
+    TRUE ~ "Other"
+  )) %>% 
+  filter(species != "Other")
+
+max2.0 <- usfs_unfiltered %>% 
+  filter(!is.na(dbhi)) %>% 
+  filter(dbhi >= 36) %>% 
+  filter(species %in% c("PICO", "QUCH", "QUKE"))
+
+```
+so there are no larger oaks of pico that were filtered out. annoying. 
+
+## 3 smallest size classes basal area and compare
+
+```{r}
+#################################### Sub data ###########################################
+
+# basal area for original FIA DBH
+fia_basal_unbinned <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(dbh > 10.2,
+         dbh < 91.44) %>% 
+  mutate(dbh_in2 = (dbh/2.54)^2, 
+         basal_ft2 = 0.005454*dbh_in2,
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/0.067245) %>% 
+  group_by(join_plot) %>% 
+  dplyr::summarize(sum_basal = sum(basal_ha)) %>% 
+  mutate(data = "unbinned")
+
+# basal area for binned FIA dbh using midpoint
+fia_basal_binned <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+   mutate(dbh_class = case_when( # assign dbh bin midpoints in INCHES
+    dbh < 10.2 ~ "0",       
+    dbh <= 30.4 ~ "7.5",  
+    dbh <= 60.9 ~ "17.5", 
+    dbh < 91.44 ~ "29.5", 
+    dbh >= 91.44 ~ "tbd"
+  )) %>% 
+  filter(dbh_class != "0",
+         dbh_class != "tbd") %>% 
+  mutate(dbh_class = as.numeric(dbh_class)) %>% 
+  mutate(dbh_in2 = dbh_class^2,
+         basal_ft2 = 0.005454*dbh_in2, 
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/0.067245) %>% 
+  group_by(join_plot) %>% 
+  dplyr::summarize( sum_basal = sum(basal_ha)) %>% 
+  mutate(data = "binned")
+
+# join
+basal_join <- inner_join(fia_basal_unbinned, fia_basal_binned, by = "join_plot")
+
+############################################# graph ########################################
+ggplot(basal_join, aes(x = sum_basal.x, y = sum_basal.y)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  labs(title = "Total Plot Basal Area of 3 Smallest DBH Classes", x = "Unbinned FIA", y = "Binned FIA")+
+  theme_bw()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))
+
+########################################## linear model ##################################
+model <- lm(sum_basal.x ~ sum_basal.y, data=basal_join)
+summary(model) # R2 = 0.98
+
+
+```
+
+## largest size class basal area and compare
+
+this should be reorganized in another code chunk so we can easily compare graphs by species 
+```{r}
+#################################### Sub data ###########################################
+
+# basal area for original FIA DBH
+fia_basal_unbinned1 <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(dbh >= 91.44) %>% 
+  mutate(dbh_in2 = (dbh/2.54)^2, 
+         basal_ft2 = 0.005454*dbh_in2,
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/0.067245) %>% 
+  group_by(join_plot, species) %>% 
+  dplyr::summarize(sum_basal = sum(basal_ha)) %>% 
+  mutate(data = "unbinned")
+
+
+# basal area for binned FIA dbh using midpoint
+fia_basal_binned1 <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(dbh >= 91.44) %>% #91.44 cm is the min DBH for the largest size class
+  mutate(dbh_max_species = case_when( # assign dbh bin midpoints in INCHES
+    species == "ABCO" ~ "145",
+    species == "CADE" ~ "162",
+    species == "PICO" ~ "104",
+    #species == "PIJE" ~ "148",
+    species == "PILA" ~ "163",
+    #species == "PIPO" ~ "149",
+    species == "PSMA" ~ "140",
+    species == "Yellow Pine" ~ '149',
+    species == "QUCH" ~ "110",
+    species == "QUKE" ~ "93"
+  )) %>% 
+   mutate(dbh_max10_species = case_when( 
+    species == "ABCO" ~ "131",
+    species == "CADE" ~ "145",
+    species == "PICO" ~ "94",
+    #species == "PIJE" ~ "133",
+    species == "PILA" ~ "146",
+    #species == "PIPO" ~ "134",
+    species == "PSMA" ~ "126",
+    species == "Yellow Pine" ~ '134',
+    species == "QUCH" ~ "99",
+    species == "QUKE" ~ "83"
+  )) %>% 
+  mutate(dbh_mean_species = case_when(
+    species == "ABCO" ~ "106",
+    species == "CADE" ~ "114",
+    species == "PICO" ~ "99",
+    #species == "PIJE" ~ "104",
+    species == "PILA" ~ "108",
+    #species == "PIPO" ~ "110",
+    species == "PSMA" ~ "107",
+    species == "Yellow Pine" ~ '104',
+    species == "QUCH" ~ "98",
+    species == "QUKE" ~ "93"
+  )) %>% 
+  mutate(dbh_median_species = case_when(
+    species == "ABCO" ~ "103",
+    species == "CADE" ~ "108",
+    species == "PICO" ~ "99",
+    #species == "PIJE" ~ "101",
+    species == "PILA" ~ "102",
+    #species == "PIPO" ~ "103",
+    species == "PSMA" ~ "104",
+    species == "Yellow Pine" ~ '101',
+    species == "QUCH" ~ "96",
+    species == "QUKE" ~ "93"
+  )) %>% 
+  mutate(dbh_mean_plus_sd_species = case_when(
+    species == "ABCO" ~ 106 + 14,
+    species == "CADE" ~ 114 + 18,
+    species == "PICO" ~ 99 + 5,
+    #species == "PIJE" ~ 104 + 12,
+    species == "PILA" ~ 108 + 15,
+    #species == "PIPO" ~ 110 + 18,
+    species == "PSMA" ~ 107 + 13,
+    species == "Yellow Pine" ~ 104 + 13,
+    species == "QUCH" ~ 98 + 6,
+    species == "QUKE" ~ 93 + 0
+  )) %>% 
+  mutate(dbh_mean_minus_sd_species = case_when(
+    species == "ABCO" ~ 106 - 14,
+    species == "CADE" ~ 114 - 18,
+    species == "PICO" ~ 99 - 5,
+    #species == "PIJE" ~ 104 - 12,
+    species == "PILA" ~ 108 - 15,
+    #species == "PIPO" ~ 110 - 18,
+    species == "PSMA" ~ 107 - 13,
+    species == "Yellow Pine" ~ 104 - 13,
+    species == "QUCH" ~ 98 - 6,
+    species == "QUKE" ~ 93 - 0
+  )) %>% 
+  mutate(dbh_final = case_when(
+    species == "ABCO" ~ 131,
+    species == "CADE" ~ 145,
+    species == "PICO" ~ 94,
+    #species == "PIJE" ~ 104 + 12,
+    species == "PILA" ~ 108 + 15,
+    #species == "PIPO" ~ 110 + 18,
+    species == "PSMA" ~ 126,
+    species == "Yellow Pine" ~ 104 + 13,
+    species == "QUCH" ~ 99,
+    species == "QUKE" ~ 83 
+  )) %>% 
+  mutate(dbh_max_species = as.numeric(dbh_max_species),
+         dbh_max10_species = as.numeric(dbh_max10_species),
+         dbh_mean_species = as.numeric(dbh_mean_species),
+         dbh_median_species = as.numeric(dbh_median_species),
+         dbh_mean_plus_sd_species = as.numeric(dbh_mean_plus_sd_species),
+         dbh_mean_minus_sd_species = as.numeric(dbh_mean_minus_sd_species),
+         dbh_final = as.numeric(dbh_final)) %>% 
+  mutate(dbh_max_mid = (dbh_max_species + 91.44)/2,
+         dbh_max10_mid = (dbh_max10_species + 91.44)/2,
+         dbh_mean_mid = (dbh_mean_species + 91.44)/2,
+         dbh_median_mid = (dbh_median_species + 91.44)/2,
+         dbh_mean_plus_sd_mid = (dbh_mean_plus_sd_species + 91.44)/2,
+         dbh_mean_minus_sd_mid = (dbh_mean_minus_sd_species + 91.44)/2,
+         dbh_final_mid = (dbh_final + 91.44)/2) %>% 
+  mutate(dbh_in2_max = (dbh_max_mid/2.54)^2,
+         basal_ft2_max = 0.005454*dbh_in2_max, 
+         basal_m2_max = basal_ft2_max/10.764,
+         basal_ha_max = basal_m2_max/0.067245) %>% 
+  mutate(dbh_in2_max10 = (dbh_max10_mid/2.54)^2,
+         basal_ft2_max10 = 0.005454*dbh_in2_max10, 
+         basal_m2_max10 = basal_ft2_max10/10.764,
+         basal_ha_max10 = basal_m2_max10/0.067245) %>% 
+  mutate(dbh_in2_mean = (dbh_mean_mid/2.54)^2,
+         basal_ft2_mean = 0.005454*dbh_in2_mean, 
+         basal_m2_mean = basal_ft2_mean/10.764,
+         basal_ha_mean = basal_m2_mean/0.067245) %>% 
+  mutate(dbh_in2_median = (dbh_median_mid/2.54)^2,
+         basal_ft2_median = 0.005454*dbh_in2_median, 
+         basal_m2_median = basal_ft2_median/10.764,
+         basal_ha_median = basal_m2_median/0.067245) %>% 
+  mutate(dbh_in2_mean_plus_sd = (dbh_mean_plus_sd_mid/2.54)^2,
+         basal_ft2_mean_plus_sd = 0.005454*dbh_in2_mean_plus_sd, 
+         basal_m2_mean_plus_sd = basal_ft2_mean_plus_sd/10.764,
+         basal_ha_mean_plus_sd = basal_m2_mean_plus_sd/0.067245) %>% 
+  mutate(dbh_in2_mean_minus_sd = (dbh_mean_minus_sd_mid/2.54)^2,
+         basal_ft2_mean_minus_sd = 0.005454*dbh_in2_mean_minus_sd, 
+         basal_m2_mean_minus_sd = basal_ft2_mean_minus_sd/10.764,
+         basal_ha_mean_minus_sd = basal_m2_mean_minus_sd/0.067245) %>% 
+   mutate(dbh_in2_final = (dbh_final_mid/2.54)^2,
+         basal_ft2_final = 0.005454*dbh_in2_final, 
+         basal_m2_final = basal_ft2_final/10.764,
+         basal_ha_final = basal_m2_final/0.067245) %>% 
+  group_by(join_plot, species) %>% 
+  dplyr::summarize(sum_basal_max = sum(basal_ha_max),
+            sum_basal_max10 = sum(basal_ha_max10),
+            sum_basal_mean = sum(basal_ha_mean), 
+            sum_basal_median = sum(basal_ha_median),
+            sum_basal_mean_plus_sd = sum(basal_ha_mean_plus_sd),
+            sum_basal_mean_minus_sd = sum(basal_ha_mean_minus_sd),
+            sum_basal_final = sum(basal_ha_final)) %>% 
+  mutate(data = "binned")
+
+# join
+basal_join1 <- inner_join(fia_basal_unbinned1, fia_basal_binned1, by = c("join_plot", "species"))
+#basal_join1 <- basal_join1 %>% filter(species == "PIJE")
+
+############################################# graph ########################################
+a=160
+b=225
+ggplot(basal_join1, aes(x = sum_basal, y = sum_basal_max)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  facet_wrap(~species, scales = "free")+
+  scale_x_continuous(lim = c(0,a), expand = c(0,0)) +
+  scale_y_continuous(lim=c(0,b), expand = c(0,0))+
+  labs(title = "Total Plot Basal Area")
+
+ggplot(basal_join1, aes(x = sum_basal, y = sum_basal_max10)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  facet_wrap(~species, scales = "free")+
+  scale_x_continuous(lim = c(0,a), expand = c(0,0)) +
+  scale_y_continuous(lim=c(0,b), expand = c(0,0))+
+  labs(title = "Total Plot Basal Area of Trees in the Largest Class size", x = "Unbinned FIA", y = "Binned FIA")
+
+ggplot(basal_join1, aes(x = sum_basal, y = sum_basal_mean)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  facet_wrap(~species, scales = "free")+
+  scale_x_continuous(lim = c(0,a), expand = c(0,0)) +
+  scale_y_continuous(lim=c(0,b), expand = c(0,0))+
+  labs(title = "Total Plot Basal Area")
+
+ggplot(basal_join1, aes(x = sum_basal, y = sum_basal_median)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  facet_wrap(~species, scales = "free")+
+  scale_x_continuous(lim = c(0,a), expand = c(0,0)) +
+  scale_y_continuous(lim=c(0,b), expand = c(0,0))+
+  labs(title = "Total Plot Basal Area")
+
+ggplot(basal_join1, aes(x = sum_basal, y = sum_basal_mean_plus_sd)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  facet_wrap(~species, scales = "free")+
+  scale_x_continuous(lim = c(0,a), expand = c(0,0)) +
+  scale_y_continuous(lim=c(0,b), expand = c(0,0))+
+  labs(title = "Total Plot Basal Area")
+
+ggplot(basal_join1, aes(x = sum_basal, y = sum_basal_mean_minus_sd)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  facet_wrap(~species, scales = "free")+
+  scale_x_continuous(lim = c(0,a), expand = c(0,0)) +
+  scale_y_continuous(lim=c(0,b), expand = c(0,0))+
+  labs(title = "Total Plot Basal Area")
+
+ggplot(basal_join1, aes(x = sum_basal, y = sum_basal_final)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  facet_wrap(~species, scales = "free")+
+  scale_x_continuous(lim = c(0,a), expand = c(0,0)) +
+  scale_y_continuous(lim=c(0,b), expand = c(0,0))+
+  labs(title = "Total Plot Basal Area")
+
+########################################## linear model ##################################
+model_max <- lm(sum_basal ~ sum_basal_max, data=basal_join1)
+summary(model_max) # R2 = 0.93
+
+model_mean <- lm(sum_basal ~ sum_basal_mean, data=basal_join1)
+summary(model_mean) # R2 = 0.83
+
+model_median <- lm(sum_basal ~ sum_basal_median, data=basal_join1)
+summary(model_median) # R2 = 0.93
+
+model_mean_plus_sd <- lm(sum_basal ~ sum_basal_mean_plus_sd, data=basal_join1)
+summary(model_mean_plus_sd) # R2 = 0.86
+
+model_mean_minus_sd <- lm(sum_basal ~ sum_basal_mean_minus_sd, data=basal_join1)
+summary(model_mean_minus_sd) # R2 = 0.79
+
+```
+
+## all fia data
+
+combine dfs with the summed smallest and largest binned basal area for the fia data
+```{r}
+#################################### 3 smallest DBH classes ##############################
+
+# basal area for binned FIA of the 3 smallest dbh size classes using midpoint
+fia_basal_smallest <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+   mutate(dbh_class = case_when( # assign dbh bin midpoints in INCHES
+    dbh < 10.2 ~ "0",       
+    dbh <= 30.4 ~ "7.5",  
+    dbh <= 60.9 ~ "17.5", 
+    dbh < 91.44 ~ "29.5", 
+    dbh >= 91.44 ~ "tbd"
+  )) %>% 
+  filter(dbh_class != "0",
+         dbh_class != "tbd") %>% 
+  mutate(dbh_class = as.numeric(dbh_class)) %>% 
+  mutate(dbh_in2 = dbh_class^2,
+         basal_ft2 = 0.005454*dbh_in2, 
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/0.067245) %>% 
+  group_by(join_plot, species) %>% 
+  dplyr::summarize(sum_basal_smallest = sum(basal_ha)) 
+
+#################################### largest DBH classes ##############################
+
+# select one metric from the largest size class df
+fia_basal_binned1_metric <- fia_basal_binned1 %>% 
+  select(join_plot, species, sum_basal_final) %>% 
+  rename(sum_basal_largest = sum_basal_final)
+
+#################################### ALL FIA DBH classes ##############################
+
+# join df with 3 smallest and largest size class together. replace NAs with 0
+fia_basal_all <- full_join(fia_basal_smallest, fia_basal_binned1_metric, by = c("join_plot", "species"))
+
+# convert NAs to 0s
+fia_basal_all[is.na(fia_basal_all)] <- 0
+
+# sum basal area for smallest and largest class
+fia_basal_all_tidy <- fia_basal_all %>%
+  group_by(join_plot, species) %>% 
+  mutate(total_basal = sum_basal_smallest + sum_basal_largest) %>% 
+  mutate(data = "FIA") 
+
+# write csv
+#write.csv(fia_basal_all_tidy, "G:/Github/gotforestry/NRV Analysis/basal_area_volume/fia_basal_all_tidy.csv")
+```
+
+## total binned and unbinned fia --> compare
+```{r}
+# sum total plot basal area for binned fia
+fia_basal_all_compare <- fia_basal_all_tidy %>%
+  group_by(join_plot) %>% 
+  dplyr::summarise(total_basal_binned = sum(total_basal)) 
+
+# calc basal area for unbinned fia
+fia_basal_unbinned2 <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  mutate(dbh_in2 = (dbh/2.54)^2, 
+         basal_ft2 = 0.005454*dbh_in2,
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/0.067245) %>% 
+  group_by(join_plot) %>% 
+  dplyr::summarize(sum_basal_unbinned = sum(basal_ha)) 
+
+# combine binned and unbinned fia data
+fia_all <- inner_join(fia_basal_all_compare, fia_basal_unbinned2, by = "join_plot")
+
+# plot
+ggplot(fia_all, aes(x = sum_basal_unbinned, y = total_basal_binned)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1) +
+  labs(x = "Unbinned FIA", y = "Binned FIA", title = "Total Plot Basal Area for all 4 Size Classes")+
+  theme_bw()+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))
+
+
+# avg basal
+fia_avg_basal <- fia_all %>% 
+  ungroup() %>% 
+  dplyr::summarise(avg_unbinned = mean (sum_basal_unbinned),
+            avg_binned = mean (total_basal_binned))
+
+```
+
+so the avg plot basal area seems really high since the avg basal area in hugh's nrv was 32.9m2/ha (+/- 20.4m2/ha) while the avg basal area for the socal fia plots is ~ 87.7 m2/ha...wonder if this is because there are more trees in the largest size class compared to sierras? --> so the number of trees/ha in the largest size class in data reported by hugh was ~ 15 while its 45 in our study area and since dbh is squared that could account for the larger basal area/ha
+
+
+
+# VTM Data
+
+calc basal area
+```{r}
+#################################### 3 smallest DBH classes ##############################
+vtm_basal_smallest <- vtm_tidy %>% 
+  filter(dbh_class != "dbh_36") %>% 
+  mutate(dbh_class_mid = case_when(         # assign dbh bin midpoints in INCHES
+    dbh_class == "dbh_4_11" ~ "7.5",
+    dbh_class == "dbh_12_23" ~ "17.5",
+    dbh_class == "dbh_24_35" ~ "29.5"
+  )) %>% 
+  mutate(dbh_class_mid = as.numeric(dbh_class_mid)) %>% 
+  mutate(dbh_in2 = dbh_class_mid^2,
+         basal_ft2 = 0.005454*dbh_in2, 
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/0.0809) %>% 
+  group_by(plotkey, species) %>% 
+  dplyr::summarize(sum_basal_smallest = sum(basal_ha)) 
+
+#################################### largest DBH classes ##############################
+
+vtm_basal_largest <- vtm_tidy %>% 
+  filter(dbh_class == "dbh_36") %>% 
+  mutate(dbh_final = case_when(
+    species == "ABCO" ~ 106 + 14,
+    species == "CADE" ~ 162,
+    species == "PICO" ~ 99 + 5,
+    #species == "PIJE" ~ 104 + 12,
+    species == "PILA" ~ 108 + 15,
+    #species == "PIPO" ~ 110 + 18,
+    species == "Yellow Pine" ~ 104 + 13,
+    species == "PSMA" ~ 107 + 13,
+    species == "QUCH" ~ 98 - 6,
+    species == "QUKE" ~ 93 # may change later after looking at all the raw data
+  )) %>% 
+  mutate(dbh_final = as.numeric(dbh_final)) %>% 
+  mutate(dbh_final_mid = (dbh_final + 91.44)/2) %>% 
+  mutate(dbh_in2_final = (dbh_final_mid/2.54)^2,
+         basal_ft2_final = 0.005454*dbh_in2_final, 
+         basal_m2_final = basal_ft2_final/10.764,
+         basal_ha_final = basal_m2_final/0.067245) %>% 
+  group_by(plotkey, species) %>% 
+  dplyr::summarize(sum_basal_largest = sum(basal_ha_final)) 
+
+#################################### ALL DBH classes ##############################
+
+# join
+vtm_basal_all <- full_join(vtm_basal_smallest, vtm_basal_largest, by = c("plotkey", "species"))
+
+# convert NAs to 0s
+vtm_basal_all[is.na(vtm_basal_all)] <- 0
+
+# sum basal area for smallest and largest class
+vtm_basal_all_tidy <- vtm_basal_all %>%
+  group_by(plotkey, species) %>% 
+  mutate(total_basal = sum_basal_smallest + sum_basal_largest) %>% 
+  mutate(data = "VTM") # 195 unique plots which matches up with the raw data
+
+# write csv
+#write.csv(vtm_basal_all_tidy, "G:/Github/gotforestry/NRV Analysis/basal_area_volume/vtm_basal_all_tidy.csv")
+
+```
+
+#test
+```{r}
+# test <- fia %>% 
+#   filter(join_plot == "57680")%>% 
+#   filter(!is.na(survey_year),
+#          !is.na(dbh)) %>% 
+#   select(species, dbh) %>% 
+#   mutate(dbh_in = (dbh/2.54),
+#          dbh_in2 = dbh_in^2,
+#          basal_ft2 = 0.00545415*dbh_in2,
+#          basal_ft2_acre = basal_ft2*6.0) %>% 
+#   dplyr::summarise(sum_basal = sum(basal_ft2_acre)) %>% 
+#   mutate(basal_m2_ha = sum_basal/4.356,
+#          basal_m2 = basal_ft2/10.764,
+#          basal_ha = basal_m2* (1/0.067245)) %>% 
+#   dplyr::summarise(sum_basal = sum(basal_ha)) 
+  
+
+  
+# Raw FIA BALIVE (basal area) for plot 52422 = 179ft2/ha = 41.09m2/ha
+
+# LG test average of all plots 
+# test2 <- fia %>% 
+#   filter(!is.na(survey_year),
+#          !is.na(dbh))%>% 
+#   select(species, dbh, join_plot) %>% 
+#   mutate(dbh_in = (dbh/2.54),
+#          dbh_in2 = dbh_in^2,
+#          basal_ft2 = 0.00545415*dbh_in2, 
+#          basal_m2 = basal_ft2/10.764)%>% 
+#   group_by(join_plot)%>% 
+#   dplyr::summarise(sum_basal = sum(basal_m2)) %>% 
+#   mutate(basal_ha = sum_basal* (1/0.067245)) #%>% 
+#   # mutate(new = "1")%>%
+  # group_by(new)%>%
+  # summarize(mean = mean(basal_ha),
+  #   sd = sd(basal_ha),
+  #   sample_size = n(),
+  #   se = sd(basal_ha)/sqrt(n()),
+  #   var = var(basal_ha))
+
+# mean basal area for all fia plots is 80.91 m^2 per hectare
+```
+either method produces the same basal area
+
+# Graphs
+
+## total basal area (including oaks)
+```{r}
+##################################### sub data ####################################
+# sum basal area by plot for vtm
+vtm_total <- vtm_basal_all_tidy %>% 
+  group_by(plotkey) %>% 
+  dplyr::summarise(total_basal_plot = sum(total_basal)) %>% 
+  ungroup() %>% 
+  dplyr::summarize(avg_plot_basal_area = mean(total_basal_plot),
+            median = median(total_basal_plot),
+            sd = sd(total_basal_plot),
+            se = sd((total_basal_plot) / sqrt(n()))) %>% 
+  mutate(data =  "VTM") 
+  
+# sum basal area by plot for fia
+fia_total <- fia_basal_all_tidy %>%
+  group_by(join_plot) %>% 
+  summarise(total_basal_plot = sum(total_basal)) %>% 
+  ungroup() %>% 
+  summarize(avg_plot_basal_area = mean(total_basal_plot),
+            median = median(total_basal_plot),
+            sd = sd(total_basal_plot),
+            se = sd((total_basal_plot) / sqrt(n()))) %>% 
+  mutate(data =  "FIA")
+
+# join data
+all_total <- rbind(vtm_total, fia_total)
+
+##################################### graph ####################################
+ggplot(all_total, aes(x = fct_rev(data), y = avg_plot_basal_area)) + 
+  geom_col(aes(fill = fct_rev(data)), position = position_dodge(width=0.9), color="black") +
+  geom_point(aes(x = fct_rev(data), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(avg_plot_basal_area, 0), x = fct_rev(data)), 
+            position=position_dodge(width = 0.9), 
+            vjust = -1.8)+
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = fct_rev(data),
+                    ymin = avg_plot_basal_area - se,
+                    ymax = avg_plot_basal_area + se),
+                color = "black",
+                width = 0.1) +
+  theme_classic() +
+  labs(x = "", y = "Average Basal Area (m2/ha)\n") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends
+  scale_y_continuous(lim=c(0,100),
+                    expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+```
+Bouldin 1999: "First, a lower limit on the total basal area at each site had to be chosen so that very low density VTM sites would not unduly bias the results.  This was necessary because the original choice of VTM sites to be included in the analysis was based on the presence of at least one tree >4” dbh, whereas the FIA lower limit was either 20 or 40 ft2/acre of basal area depending on the choice of prism used to measure the stand.  Since a BAF 40 prism was used in about two thirds of the stands (in which each tree sampled represents 40 ft2/acre), this value (40 ft2/acre) was chosen as the minimum basal area for VTM sites." --> 40ft2/ha = 3.716ft/ha
+
+## total basal area (excluding oaks)
+```{r}
+##################################### sub data ####################################
+# sum basal area by plot for vtm
+vtm_total_no_oak <- vtm_basal_all_tidy %>% 
+  filter(!species %in% c("QUCH", "QUKE")) %>% # Filter to non-oak species
+  group_by(plotkey) %>% 
+  summarise(total_basal_plot = sum(total_basal)) %>% 
+  ungroup() %>% 
+  summarize(avg_plot_basal_area = mean(total_basal_plot),
+            median = median(total_basal_plot),
+            sd = sd(total_basal_plot),
+            se = sd((total_basal_plot) / sqrt(n()))) %>% 
+  mutate(data =  "VTM") 
+  
+# sum basal area by plot for fia
+fia_total_no_oak <- fia_basal_all_tidy %>%
+  filter(!species %in% c("QUCH", "QUKE")) %>% # Filter to non-oak species
+  group_by(join_plot) %>% 
+  summarise(total_basal_plot = sum(total_basal)) %>% 
+  ungroup() %>% 
+  summarize(avg_plot_basal_area = mean(total_basal_plot),
+            median = median(total_basal_plot),
+            sd = sd(total_basal_plot),
+            se = sd((total_basal_plot) / sqrt(n()))) %>% 
+  mutate(data =  "FIA")
+
+# join data
+all_total_no_oak <- rbind(vtm_total_no_oak, fia_total_no_oak)
+
+##################################### graph ####################################
+ggplot(all_total_no_oak, aes(x = fct_rev(data), y = avg_plot_basal_area)) + 
+  geom_col(aes(fill = fct_rev(data)), position = position_dodge(width=0.9), color="black") +
+  geom_point(aes(x = fct_rev(data), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(avg_plot_basal_area, 0), x = fct_rev(data)), 
+            position=position_dodge(width = 0.9), 
+            vjust = -1.8)+
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = fct_rev(data),
+                    ymin = avg_plot_basal_area - se,
+                    ymax = avg_plot_basal_area + se),
+                color = "black",
+                width = 0.1) +
+  theme_classic() +
+  labs(x = "", 
+       y = "Average Basal Area (m2/ha)\n",
+       title = "Total Basal Area (Excluding Oaks)") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends
+  scale_y_continuous(lim=c(0,100),
+                    expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+```
+## species
+
+plot basal area by species
+
+```{r}
+##################################### sub data ####################################
+# sum basal area by plot for vtm
+vtm_species <- vtm_basal_all_tidy %>% 
+  group_by(species) %>% 
+  summarize(avg_plot_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>% 
+  mutate(data =  "VTM") 
+  
+# sum basal area by plot for fia
+fia_species <- fia_basal_all_tidy %>%
+  group_by(species) %>% 
+  summarize(avg_plot_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>% 
+  mutate(data =  "FIA")
+
+# join data
+all_species <- rbind(vtm_species, fia_species)
+
+##################################### graph ####################################
+ggplot(all_species, aes(x = species, y = avg_plot_basal_area, group = fct_rev(data))) + 
+  geom_col(aes(fill = fct_rev(data)), position = position_dodge(width=0.9), color="black") +
+  geom_point(aes(x = species, y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(avg_plot_basal_area, 0), x = species), 
+            position=position_dodge(width = 0.9), 
+            vjust = -1.8)+
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = species,
+                    ymin = avg_plot_basal_area - se,
+                    ymax = avg_plot_basal_area + se),
+                color = "black",
+                width = 0.1) +
+  theme_classic() +
+  labs(x = "", y = "Average Basal Area (m2/ha)\n",
+       title = "Average Basal Area by Species") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends
+  scale_y_continuous(lim=c(0,60),
+                    expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+
+```
+the large increase in basal area of cade is interesting since the graphs by size class showed little increase/a decrease in cade...wonder if this is because there are few cade in the smaller size class but many in the large size class
+
+*the #s for basal area seem rather large when compared to figure 20 in hughs nrv...idk if i did something wrong*
+
+## species across the landscape
+
+add 0s to the plots where the species is not found
+```{r}
+# Copied from tree size class code
+
+####################################### sub data ####################################### 
+# calc avg basal area per plot
+vtm_basic_df1 <- vtm_basal_all_tidy %>%
+  filter(species != "PSMA") %>%  # remove PSMA from species graph bc of small n
+  pivot_wider(names_from = species,
+              values_from = total_basal) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, "0"),
+         cade = replace_na(cade, "0"),
+         pico = replace_na(pico, "0"),
+         pila = replace_na(pila, "0"),
+         yellow_pine = replace_na(yellow_pine, "0"),
+         quch = replace_na(quch, "0"),
+         quke = replace_na(quke, "0")) %>%
+  pivot_longer(5:11,
+               names_to = 'species',
+               values_to = "total_basal") %>%
+  mutate(total_basal=as.numeric(total_basal)) %>%
+  group_by(species) %>%
+  summarize(landscape_avg_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>% 
+  mutate(data = "VTM")
+
+fia_basic_df1 <- fia_basal_all_tidy %>% 
+  filter(species != "PSMA") %>%  # remove PSMA from species graph bc of small n
+  pivot_wider(names_from = species,
+              values_from = total_basal) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, "0"),
+         cade = replace_na(cade, "0"),
+         pico = replace_na(pico, "0"),
+         pila = replace_na(pila, "0"),
+         yellow_pine = replace_na(yellow_pine, "0"),
+         quch = replace_na(quch, "0"),
+         quke = replace_na(quke, "0")) %>%
+  pivot_longer(5:11,
+               names_to = 'species',
+               values_to = "total_basal") %>%
+  mutate(total_basal=as.numeric(total_basal)) %>%
+  group_by(species) %>%
+  summarize(landscape_avg_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>% 
+  mutate(data = "FIA")
+
+basal_area_basic_df1 <- rbind(vtm_basic_df1, fia_basic_df1)
+####################################### graph ####################################### 
+ggplot(basal_area_basic_df1, 
+       aes(x = species,
+           y = landscape_avg_basal_area, 
+           group = fct_rev(data))) + 
+  geom_col(aes(fill = fct_rev(data)), position = position_dodge(width=0.9), color="black") +
+  #geom_point(aes(x = species, y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(landscape_avg_basal_area, 1), x = species), 
+            position=position_dodge(width = 0.9), 
+            vjust = -1.8)+
+  # I had 4 as the mean for ABCO in VTM and 11 as the mean for yellow pine for both datasets in my code, so I'm not sure whether we should just use yours or my graph. - Jen
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = species,
+                    ymin = landscape_avg_basal_area - se,
+                    ymax = landscape_avg_basal_area + se),
+                color = "black",
+                width = 0.1) +
+  theme_classic() +
+  labs(x = "Species", y = "Average basal Area (Trees/ha)\n", title = "Total Basal Area Across Landscape") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends
+  scale_y_continuous(lim=c(0,15), # Changed the extent to a bit smaller so we can see the bars better - Jen
+                    expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D")) #+
+  #scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "94+"))
+
+```
+
+## Family (lifeform) 
+
+### by plot
+```{r}
+# Create new df with species and lifeform
+fia_lifeform_info <- fia_tidy %>% 	
+  select(species, lifeform) %>% 
+  group_by(species, lifeform) %>% 	  
+  count() %>% 	 
+  select(-n)	 
+  
+# Create new df for vtm just in case - seems to be the same	
+vtm_lifeform_info <- vtm_tidy %>% 	
+  select(species, lifeform) %>% 	  
+  group_by(species, lifeform) %>% 	  
+  count() %>% 	 
+  select(-n)	 
+
+# Join basal area and lifeform dfs together	
+fia_lifeform_join <- left_join(fia_basal_all_tidy, fia_lifeform_info, by = "species")
+vtm_lifeform_join <- left_join(vtm_basal_all_tidy, vtm_lifeform_info, by = "species")	
+####################################### sub data ####################################### 	
+# calc avg basal area	
+vtm_lifeform <- vtm_lifeform_join %>% 	
+  filter(!is.na(lifeform)) %>%	  
+  group_by(lifeform) %>%	  
+  summarize(avg_plot_basal_area = mean(total_basal),	  
+            median = median(total_basal),	           
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n()))) %>% 	            
+  mutate(data = "VTM") 	  
+fia_lifeform <- fia_lifeform_join %>% 	
+  filter(!is.na(lifeform)) %>% 	  
+  group_by(lifeform) %>% 	  
+  summarize(avg_plot_basal_area = mean(total_basal),	  
+            median = median(total_basal),	            
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n()))) %>% 	            
+  mutate(data = "FIA")	  
+
+lifeform_bind <- rbind(vtm_lifeform, fia_lifeform)	
+
+####################################### graph ####################################### 	
+ggplot(lifeform_bind, aes(x=lifeform, y= avg_plot_basal_area, group=fct_rev(data))) + 	
+  geom_col(aes(fill=fct_rev(data)), position='dodge', color="black") + 	  
+  geom_point(aes(x = lifeform, y = median, shape = "4"), position=position_dodge(width=0.9)) +	  
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean	 
+  geom_text(aes(label=round(avg_plot_basal_area, 0), x = lifeform), 	  
+             position=position_dodge(width = 0.9), 	              
+             vjust = -1.8)+	          
+  scale_shape_manual(values = 4, labels = "Median", name = "") +	 
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +	  
+  geom_errorbar(position=position_dodge(width=0.9),	 
+                aes(x = lifeform, 	                
+                    ymin = avg_plot_basal_area - se,	                    
+                    ymax = avg_plot_basal_area + se),	                   
+                color = "black",	            
+                width = 0.3) +	                
+  labs(x = "Family", y = "Average Basal Area (m^2/ha)") + 	   
+  #facet_wrap(~lifeform) +	
+  theme_classic()+	 
+  scale_y_continuous(lim=c(0,50), expand=c(0,0)) +	 
+  theme(panel.border = element_rect(colour = "black", fill=NA),	  
+        legend.title = element_blank(),	      
+        legend.key.size = unit(0.4, "cm"), # size of the text/key	      
+        legend.box.background = element_rect(colour = "black"),	      
+        legend.box.margin = margin(1, 5, 5, 5),	       
+        legend.spacing.y = unit(-0.1, "cm")) +	        
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))	  
+####################################### % change #######################################  
+pct_change_lifeform_ba <- lifeform_bind %>%	
+  select(lifeform, avg_plot_basal_area, data) %>%	  
+  group_by(lifeform) %>%	  
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area)*100)	  
+
+pct_change_lifeform_ba$pct_change	
+
+```
+
+
+### by landscape
+```{r}
+	
+# calc avg basal area	
+vtm_lifeform <- vtm_lifeform_join %>% 	
+  filter(!is.na(lifeform)) %>%	
+  pivot_wider(names_from = species,
+              values_from = total_basal) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, "0"),
+         cade = replace_na(cade, "0"),
+         pico = replace_na(pico, "0"),
+         pila = replace_na(pila, "0"),
+         yellow_pine = replace_na(yellow_pine, "0"),
+         quch = replace_na(quch, "0"),
+         quke = replace_na(quke, "0")) %>%
+  pivot_longer(5:11,
+               names_to = 'species',
+               values_to = "total_basal") %>%
+  mutate(total_basal=as.numeric(total_basal)) %>%
+  group_by(lifeform) %>%	  
+  summarize(landscape_avg_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>% 
+  mutate(data = "VTM") 	  
+
+fia_lifeform <- fia_lifeform_join %>% 	
+  filter(!is.na(lifeform)) %>% 	  
+  pivot_wider(names_from = species,
+              values_from = total_basal) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, "0"),
+         cade = replace_na(cade, "0"),
+         pico = replace_na(pico, "0"),
+         pila = replace_na(pila, "0"),
+         yellow_pine = replace_na(yellow_pine, "0"),
+         quch = replace_na(quch, "0"),
+         quke = replace_na(quke, "0")) %>%
+  pivot_longer(5:11,
+               names_to = 'species',
+               values_to = "total_basal") %>%
+  mutate(total_basal=as.numeric(total_basal)) %>%
+  group_by(lifeform) %>%	  
+  summarize(landscape_avg_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>%
+  mutate(data = "FIA")
+
+####################################### graph ####################################### 	
+ggplot(lifeform_bind, aes(x=lifeform, y= avg_plot_basal_area, group=fct_rev(data))) + 	
+  geom_col(aes(fill=fct_rev(data)), position='dodge', color="black") + 	  
+  geom_point(aes(x = lifeform, y = median, shape = "4"), position=position_dodge(width=0.9)) +	  
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean	 
+  geom_text(aes(label=round(avg_plot_basal_area, 0), x = lifeform), 	  
+             position=position_dodge(width = 0.9), 	              
+             vjust = -1.8)+	          
+  scale_shape_manual(values = 4, labels = "Median", name = "") +	 
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +	  
+  geom_errorbar(position=position_dodge(width=0.9),	 
+                aes(x = lifeform, 	                
+                    ymin = avg_plot_basal_area - se,	                    
+                    ymax = avg_plot_basal_area + se),	                   
+                color = "black",	            
+                width = 0.3) +	                
+  labs(x = "Family", y = "Average Basal Area (m^2/ha)") + 	   
+  #facet_wrap(~lifeform) +	
+  theme_classic()+	 
+  scale_y_continuous(lim=c(0,50), expand=c(0,0)) +	 
+  theme(panel.border = element_rect(colour = "black", fill=NA),	  
+        legend.title = element_blank(),	      
+        legend.key.size = unit(0.4, "cm"), # size of the text/key	      
+        legend.box.background = element_rect(colour = "black"),	      
+        legend.box.margin = margin(1, 5, 5, 5),	       
+        legend.spacing.y = unit(-0.1, "cm")) +	        
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))	  
+####################################### % change #######################################  
+pct_change_lifeform_ba <- lifeform_bind %>%	
+  select(lifeform, avg_plot_basal_area, data) %>%	  
+  group_by(lifeform) %>%	  
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area)*100)	  
+
+pct_change_lifeform_ba$pct_change	
+```
+
+## shade/fire tolerance
+
+plot basal area by shade/fire tolerance
+
+### Excluding Oaks 
+```{r}
+# Copied from tree size class code
+
+# Create new df with species and shade/fire tolerance
+fia_shade_info <- fia_tidy %>% 
+  select(species, shade_tolerance) %>% 
+  group_by(species, shade_tolerance) %>% 
+  count() %>% 
+  select(-n)
+
+# Create new df for vtm just in case - seems to be the same
+vtm_shade_info <- vtm_tidy %>% 
+  select(species, shade_tolerance) %>% 
+  group_by(species, shade_tolerance) %>% 
+  count() %>% 
+  select(-n)
+
+# Join basal area and shade dfs together
+fia_shade_join <- left_join(fia_basal_all_tidy, fia_shade_info, by = "species")
+vtm_shade_join <- left_join(vtm_basal_all_tidy, vtm_shade_info, by = "species")
+
+########################################  subdata ####################################### 
+vtm_shade <- vtm_shade_join %>% 
+  filter(!is.na(shade_tolerance)) %>%
+  group_by(shade_tolerance) %>%
+  #summarise(total_basal_plot = sum(total_basal)) %>% 
+  summarize(avg_plot_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>% 
+  mutate(data = "VTM") 
+
+fia_shade <- fia_shade_join %>% 
+  filter(!is.na(shade_tolerance)) %>% 
+  group_by(shade_tolerance) %>% 
+  summarize(avg_plot_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n()))) %>% 
+  mutate(data = "FIA")
+
+shade_bind <- rbind(vtm_shade, fia_shade)
+########################################  graph ####################################### 
+ggplot(shade_bind, aes(x=shade_tolerance, y=avg_plot_basal_area , group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+  geom_point(aes(x = shade_tolerance, y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(avg_plot_basal_area, 0), x = shade_tolerance), 
+            position=position_dodge(width = 0.9), 
+            vjust = -2.5)+
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = shade_tolerance, 
+                    ymin = avg_plot_basal_area - se,
+                    ymax = avg_plot_basal_area + se),
+                color = "black",
+                width = 0.3) +
+  theme_classic()+
+  labs(x = "Fire/Shade Tolerance", y = "Average Basal Area", title = "Average Basal Area by Shade Tolerance") +
+  scale_y_continuous(lim=c(0,50), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(vjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+####################################### % change #######################################  
+pct_change_shade_ba <- shade_bind %>%	
+  select(shade_tolerance, avg_plot_basal_area, data) %>%	  
+  group_by(shade_tolerance) %>%	  
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area)*100)	  
+
+# I got 49.69774 and 91.43428. These numbers seem way off, I'll need to calculate again - Jen.
+
+pct_change_shade_ba$pct_change	
+```
+Fire intolerant/shade tolerant basal area increased by approximately ____ over the sixty years. Fire tolerant/shade intolerant basal area increased by ___. Note that this is without oaks. 
+
+### Including Oaks
+
+```{r}
+# Copied from tree size class code
+
+# Create new df with species and shade/fire tolerance
+fia_shade_info2 <- fia_tidy %>% 
+  select(species, shade_tolerance2) %>% 
+  group_by(species, shade_tolerance2) %>% 
+  count() %>% 
+  select(-n)
+
+# Create new df for vtm just in case - seems to be the same
+vtm_shade_info2 <- vtm_tidy %>% 
+  select(species, shade_tolerance2) %>% 
+  group_by(species, shade_tolerance2) %>% 
+  count() %>% 
+  select(-n)
+
+# Join basal area and shade dfs together
+fia_shade_join2 <- left_join(fia_basal_all_tidy, fia_shade_info2, by = "species")
+vtm_shade_join2 <- left_join(vtm_basal_all_tidy, vtm_shade_info2, by = "species")
+
+########################################  subdata ####################################### 
+vtm_shade2 <- vtm_shade_join2 %>% 
+  filter(!is.na(shade_tolerance2)) %>%
+  group_by(shade_tolerance2) %>%
+  #summarise(total_basal_plot = sum(total_basal)) %>% 
+  summarize(avg_plot_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "VTM") 
+
+fia_shade2 <- fia_shade_join2 %>% 
+  filter(!is.na(shade_tolerance2)) %>% 
+  group_by(shade_tolerance2) %>% 
+  summarize(avg_plot_basal_area = mean(total_basal),
+            median = median(total_basal),
+            sd = sd(total_basal),
+            se = sd((total_basal) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "FIA")
+
+shade_bind2 <- rbind(vtm_shade2, fia_shade2)
+########################################  graph ####################################### 
+ggplot(shade_bind2, aes(x=shade_tolerance2, y=avg_plot_basal_area , group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+  geom_point(aes(x = shade_tolerance2, y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(avg_plot_basal_area, 0), x = shade_tolerance2), 
+            position=position_dodge(width = 0.9), 
+            vjust = -2.5)+
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = shade_tolerance2, 
+                    ymin = avg_plot_basal_area - se,
+                    ymax = avg_plot_basal_area + se),
+                color = "black",
+                width = 0.3) +
+  theme_classic()+
+  labs(x = "Fire/Shade Tolerance", y = "Average Basal Area", title = "Average Basal Area by Shade Tolerance Including Oaks") +
+  scale_y_continuous(lim=c(0,50), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(vjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+####################################### % change #######################################  
+pct_change_shade_ba2 <- shade_bind2 %>%	
+  select(shade_tolerance2, avg_plot_basal_area, data) %>%	  
+  group_by(shade_tolerance2) %>%	  
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area)*100)	  
+
+# I got 88.57785 and 58.29956. The first number seems a little off too - Jen.
+
+pct_change_shade_ba2$pct_change
+
+```
+When oaks are added, it's the inverse situation between the two categories. the VTM basal area for shade intolerant/fire tolerant increased, so the difference between the two datasets drastically decreased. On the other hand, the shade tolerant/fire intolerant species is increasing by about a half. 
+
+## elevation
+
+plot basal area by elevation
+
+### Including All Species
+```{r}
+# Copied from tree size class code 
+
+# Create new df with species and shade/fire tolerance
+fia_elev_info <- fia_tidy %>% 
+  select(join_plot, elevation_class) %>% 
+  group_by(join_plot, elevation_class) %>% 
+  count() %>% 
+  select(-n)
+
+# Create new df for vtm just in case - seems to be the same
+vtm_elev_info <- vtm_tidy %>% 
+  select(plotkey, elevation_class) %>% 
+  group_by(plotkey, elevation_class) %>% 
+  count() %>% 
+  select(-n)
+
+# Join basal area and shade dfs together
+fia_elev_join <- left_join(fia_basal_all_tidy, fia_elev_info, by = "join_plot")
+vtm_elev_join <- left_join(vtm_basal_all_tidy, vtm_elev_info, by = "plotkey")
+
+########################################  subdata ####################################### 
+vtm_elev_ba <- vtm_elev_join %>% 
+  filter(!is.na(elevation_class)) %>%  # one plot did not have elevation	  
+  group_by(elevation_class) %>% 	
+  summarize(avg_plot_basal_area = mean(total_basal),	 
+            median = median(total_basal),	            
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n()))) %>% 	            
+  mutate(data = "VTM") 	 
+
+fia_elev_ba <- fia_elev_join %>% 	 
+  group_by(elevation_class) %>% 	 
+  summarize(avg_plot_basal_area = mean(total_basal),	  
+            median = median(total_basal),	            
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n()))) %>%	            
+  mutate(data = "FIA")	
+
+ba_elev_bind <- rbind(vtm_elev_ba, fia_elev_ba)	
+
+########################################  graph ####################################### 
+# format used in hughs NRV
+
+ggplot(ba_elev_bind,
+       aes(x = elevation_class,	      
+           y = avg_plot_basal_area, group=fct_rev(data))) +	         
+ geom_col(aes(fill = fct_rev(data)), # Switch order of FIA and VTM data	 
+              position='dodge',	
+          color="black") +
+  geom_point(aes(x = elevation_class, y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = elevation_class, 
+                    ymin = avg_plot_basal_area - se,
+                    ymax = avg_plot_basal_area + se),
+                color = "black",
+                width = 0.3) +
+  theme_classic()+
+  labs(x = "Elevation (m)", y = "Average Basal Area", title = "Average Basal Area by Elevation") +
+  scale_y_continuous(lim=c(0,50), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(vjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+######################################## % change ####################################### 
+pct_change_elev_ba <- ba_elev_bind %>%
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area-1)*100*-1)	  
+
+pct_change_elev_ba$pct_change	
+
+```
+The average basal area has increased for all elevation classes from the VTM values. 
+
+### Elevation by Oaks only
+```{r}
+# Copied from tree size class code 
+
+# Create new df with plot and elevation
+fia_oak_elev_info <- fia_tidy %>% 
+  select(join_plot, species, elevation_class) %>% 
+  group_by(join_plot, species, elevation_class) %>% 
+  filter(species %in% c("QUCH", "QUKE"))  %>% # Include just oaks
+  count() %>% 
+  select(-n)
+
+# Create new df for vtm just in case - seems to be the same
+vtm_oak_elev_info <- vtm_tidy %>% 
+  select(plotkey, species, elevation_class) %>% 
+  group_by(plotkey, species, elevation_class) %>%
+  filter(species %in% c("QUCH", "QUKE")) %>% # Include just oaks
+  count() %>% 
+  select(-n)
+
+# Join basal area and elevation dfs together
+fia_oak_elev_join <- left_join(fia_basal_all_tidy, fia_oak_elev_info, by = c("join_plot","species")) %>% 
+  filter(species %in% c("QUCH", "QUKE")) # Include just oaks
+vtm_oak_elev_join <- left_join(vtm_basal_all_tidy, vtm_oak_elev_info, by = c("plotkey", "species")) %>% 
+  filter(species %in% c("QUCH", "QUKE")) # Include just oaks
+
+########################################  subdata ####################################### 
+vtm_oak_elev_ba <- vtm_oak_elev_join %>% 
+  filter(!is.na(elevation_class)) %>%  # one plot did not have elevation	  
+  group_by(elevation_class) %>% 	
+  summarize(avg_plot_basal_area = mean(total_basal),	 
+            median = median(total_basal),	            
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n())),
+            sample_size = n()) %>% 	            
+  mutate(data = "VTM") 	 
+
+fia_oak_elev_ba <- fia_oak_elev_join %>% 	 
+  group_by(elevation_class) %>% 	 
+  summarize(avg_plot_basal_area = mean(total_basal),	  
+            median = median(total_basal),	            
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n())),
+            sample_size = n()) %>%	            
+  mutate(data = "FIA")	
+
+ba_oak_elev_bind <- rbind(vtm_oak_elev_ba, fia_oak_elev_ba)	
+
+# Highest sample sizes are in the 1,500-2,000 m elevation band for both datasets (61 and 73 for VTM and FIA respectively). The sample sizes in the other elevation bands for the VTM data are low (less than 20). There seems to be no observations for the 2500+ m elevation class for VTM, and the sample size for the 2500+ m class in the FIA data is really small (only 3)!
+
+########################################  graph ####################################### 
+# format used in hughs NRV
+
+ggplot(ba_oak_elev_bind,
+       aes(x = elevation_class,	      
+           y = avg_plot_basal_area, group=fct_rev(data))) +	         
+ geom_col(aes(fill = fct_rev(data)), # Switch order of FIA and VTM data	 
+              position='dodge',	
+          color="black") +
+  geom_point(aes(x = elevation_class, y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = elevation_class, 
+                    ymin = avg_plot_basal_area - se,
+                    ymax = avg_plot_basal_area + se),
+                color = "black",
+                width = 0.3) +
+  theme_classic()+
+  labs(x = "Elevation (m)", y = "Average Basal Area", title = "Average Basal Area by Elevation (Oaks only)") +
+  scale_y_continuous(lim=c(0,50), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(vjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+######################################## % change ####################################### 
+pct_change_oak_elev_ba <- ba_oak_elev_bind %>%
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area-1)*100*-1)	  
+
+pct_change_oak_elev_ba$pct_change	
+
+```
+Basal area for oaks only is much lower (at least below 15 m2/ha), but the sample sizes here look really small. There is still the general trend of basal area increasing from VTM to FIA but not much.
+
+## elevation and aspect
+
+plot basal area by elevation and aspect
+
+### Including All Species
+```{r}
+# Notes:
+# very low sample sizes. 10 plotts in >2500 N, 3 plots in >2500 S, 5 plots in 1000–1499 S	
+# create elevation/aspect classes (in m)	
+
+# Create new df with plot, elevation and aspect	# Create new df with plot, elevation and aspect
+fia_elev_aspc_info <- fia_tidy %>% 	
+  select(join_plot, aspect_qualitative, elevation_class) %>% 	  
+  group_by(join_plot, aspect_qualitative, elevation_class) %>% 	  
+  rename("aspect" = "aspect_qualitative") %>% 	  
+  count() %>% 	  
+  select(-n) %>% 	  
+  filter(!is.na(aspect)) %>% 	  
+  filter(!aspect == "Flat")	  
+
+# Create new df for vtm just in case 	# Create new df for vtm just in case 
+vtm_elev_aspc_info <- vtm_tidy %>% 	
+  rename("aspect" = "exposure") %>% 	
+  select(plotkey, aspect, elevation_class) %>% 	  
+  group_by(plotkey, aspect, elevation_class) %>% 	 
+  count() %>% 	 
+  select(-n) %>% 	
+  filter(!is.na(aspect)) %>% 	 
+  filter(!aspect == "Level")	
+
+# Join basal area and elevation dfs together	# Join basal area and elevation dfs together
+fia_elev_aspc_join <- left_join(fia_basal_all_tidy, fia_elev_aspc_info, by = "join_plot")	
+vtm_elev_aspc_join <- left_join(vtm_basal_all_tidy, vtm_elev_aspc_info, by = "plotkey")	
+
+########################################  subdata ####################################### 	
+
+vtm_elevation_aspect <- vtm_elev_aspc_join %>%	
+  select(plotkey, elevation_class, species, total_basal, aspect) %>%	 
+  mutate(aspect_new = case_when(aspect == "SE" ~ "S",	 
+                                aspect == "SW" ~ "S",	                          
+                                aspect =="NE" ~ "N",	                          
+                                aspect == "NW" ~ "N",	                           
+                                aspect == "N" ~ "N",	                            
+                                aspect == "S" ~ "S",	                            
+                                TRUE ~ "none")) %>% 	                             
+  filter(!aspect_new == "none") # filter out aspect_new = none	 
+
+fia_elevation_aspect <- fia_elev_aspc_join %>%	
+  select(join_plot, elevation_class, species, total_basal, aspect) %>%	
+  mutate(aspect_new = case_when(aspect == "SE" ~ "S",	  
+                                aspect == "SW" ~ "S",	                               
+                                aspect =="NE" ~ "N",	                                
+                                aspect == "NW" ~ "N",	                               
+                                aspect == "N" ~ "N",	                              
+                                aspect == "S" ~ "S",	                              
+                                TRUE ~ "none")) %>% 	                              
+  filter(!aspect_new == "none") # filter out aspect_new = none	
+
+############### VTM Subdata #################	
+
+# check how many plots are in each elevation/aspect grouping	
+vtm_elevation_aspect_count <-vtm_elevation_aspect %>% 
+  group_by(elevation_class, aspect_new) %>% 	  
+  tally()	  
+
+# Note: very low sample sizes. 10 plots in >2500 N, 3 plots in >2500 S, 4 plots in 1000–1499 N, 4 plots in 1000–1499 S	
+
+# create summaries of groupings	# create summaries of groupings
+vtm_elevation_aspect_df <-vtm_elevation_aspect %>% 	
+  group_by(elevation_class, aspect_new)%>% 	  
+    summarize(avg_plot_basal_area = mean(total_basal),	    
+            median = median(total_basal),	            
+            sd = sd(total_basal),	           
+            se = sd((total_basal) / sqrt(n()))) %>% 	            
+  mutate(data  = "VTM")	  
+
+# combine elevation and aspect columns	
+vtm_elevation_aspect_df <-vtm_elevation_aspect_df %>% 
+  unite(plot, c(elevation_class, aspect_new), sep = " ", remove = FALSE)	  
+
+# create summaries of groupings	# create summaries of groupings
+vtm_elevation_aspect_df <-vtm_elevation_aspect %>% 
+  group_by(elevation_class, aspect_new)%>% 	 
+    summarize(avg_plot_basal_area = mean(total_basal),	  
+            median = median(total_basal),	         
+            sd = sd(total_basal),	          
+            se = sd((total_basal) / sqrt(n()))) %>% 	            
+  mutate(data = "VTM")	  
+
+# combine elevation and aspect columns	# combine elevation and aspect columns
+vtm_elevation_aspect_df <-vtm_elevation_aspect_df %>% 	
+  unite(plot, c(elevation_class, aspect_new), sep = " ", remove = FALSE)	  
+
+############### FIA Subdata #################
+
+# check how many plots are in each elevation/aspect grouping	
+fia_elevation_aspect_count <-fia_elevation_aspect %>% 	
+  group_by(elevation_class, aspect_new) %>% 	 
+  tally()	 
+# create summaries of groupings	# create summaries of groupings
+fia_elevation_aspect_df <-fia_elevation_aspect %>% 	
+  group_by(elevation_class, aspect_new)%>% 	 
+    summarize(avg_plot_basal_area = mean(total_basal),	   
+            median = median(total_basal),	           
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n()))) %>% 	          
+  mutate(data = "FIA")	
+
+# combine elevation and aspect columns
+fia_elevation_aspect_df <-fia_elevation_aspect_df %>% 	
+  unite(plot, c(elevation_class, aspect_new), sep = " ", remove = FALSE)	  
+
+ba_elev_aspc_bind <- rbind(vtm_elevation_aspect_df, fia_elevation_aspect_df)	
+
+# Create factor level	# Create factor level
+aspect_type_order <- c("VTM", "FIA")	
+aspect_order <- c("1000–1499 N","1000–1499 S", "1500–1999 N","1500–1999 S", "2000–2499 N","2000–2499 S", ">2500 N", ">2500 S")	
+facet_order<- c("S", "N")
+
+##------------------------------------------------------------------------------------ 	
+# graph 	
+
+ggplot(ba_elev_aspc_bind, aes(x = plot, 
+                              y = avg_plot_basal_area,	                             
+                              group = fct_rev(data)))+	                              
+  geom_col(aes(fill = fct_rev(data)), position=position_dodge(0.9), stat = "identity", color = "black")+	  
+  geom_point(aes(x = plot, y = median, shape = "4"), position=position_dodge(width=0.9)) +	 
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean	 
+  scale_shape_manual(values = 4, labels = "Median", name = "") +	 
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +	 
+  geom_errorbar(position=position_dodge(width=0.9),	 
+                aes(x = plot, 	               
+                    ymin = avg_plot_basal_area - se,	                   
+                    ymax = avg_plot_basal_area+ se),	                  
+                color = "black",	             
+                width = 0.4) +	              
+  #geom_text(aes(label=round(avg_plot_basal_area, 0), x = plot), 	 
+            #position=position_dodge(width = 0.9), 	           
+            #vjust = -3)+	         
+  theme_classic()+	 
+  labs(title = "Tree Basal Area by Elevation and Aspect", x = "Elevation (m) and Aspect", y = "Average Basal Area (m^2/ha)") +	  
+  scale_y_continuous(lim=c(0,60), expand=c(0,0)) +	
+  theme(panel.border = element_rect(colour = "black", fill=NA),	 
+        legend.title = element_blank(),	       
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),	       
+        legend.key.size = unit(0.4, "cm"), # size of the text/key	       
+        legend.box.background = element_rect(colour = "black"),	      
+        legend.box.margin = margin(2, 2, 2, 2),	      
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends	     
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))	
+
+####################################### % change #######################################   
+pct_change_elev_aspc_ba <- ba_elev_aspc_bind %>%
+  select(avg_plot_basal_area, plot, elevation_class, aspect_new, data) %>%
+  group_by(plot) %>%
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area-1)*100*-1)
+
+pct_change_elev_aspc_ba$pct_change
+
+#ggsave("basal area by elevation and aspect.png", plot = last_plot(), "png", "G:/Github/gotforestry/NRV Analysis/basal_area_volume/Plot-based Graphs")
+```
+# Elevation and Aspect by Oaks only
+
+```{r}
+# Notes:
+# very low sample sizes. 10 plotts in >2500 N, 3 plots in >2500 S, 5 plots in 1000–1499 S	
+# create elevation/aspect classes (in m)	
+
+# Create new df with plot, elevation and aspect	# Create new df with plot, elevation and aspect
+fia_elev_aspc_info_oak <- fia_tidy %>% 	
+  filter(species %in% c("QUCH", "QUKE")) %>% # Filter to oaks only
+  select(join_plot, aspect_qualitative, elevation_class) %>% 	  
+  group_by(join_plot, aspect_qualitative, elevation_class) %>% 	  
+  rename("aspect" = "aspect_qualitative") %>% 	  
+  count() %>% 	  
+  select(-n) %>% 	  
+  filter(!is.na(aspect)) %>% 	  
+  filter(!aspect == "Flat")	  
+
+# Create new df for vtm just in case
+vtm_elev_aspc_info_oak <- vtm_tidy %>% 
+  filter(species %in% c("QUCH", "QUKE")) %>% # Filter to oaks only
+  rename("aspect" = "exposure") %>% 	
+  select(plotkey, aspect, elevation_class) %>% 	  
+  group_by(plotkey, aspect, elevation_class) %>% 	 
+  count() %>% 	 
+  select(-n) %>% 	
+  filter(!is.na(aspect)) %>% 	 
+  filter(!aspect == "Level")	
+
+# Join basal area and elevation dfs together	# Join basal area and elevation dfs together
+fia_elev_aspc_join_oak <- left_join(fia_basal_all_tidy, fia_elev_aspc_info_oak, by = "join_plot")	
+vtm_elev_aspc_join_oak <- left_join(vtm_basal_all_tidy, vtm_elev_aspc_info_oak, by = "plotkey")	
+
+########################################  subdata ####################################### 	
+
+vtm_elevation_aspect_oak <- vtm_elev_aspc_join_oak %>%	
+  select(plotkey, elevation_class, species, total_basal, aspect) %>%	 
+  mutate(aspect_new = case_when(aspect == "SE" ~ "S",	 
+                                aspect == "SW" ~ "S",	                          
+                                aspect =="NE" ~ "N",	                          
+                                aspect == "NW" ~ "N",	                           
+                                aspect == "N" ~ "N",	                            
+                                aspect == "S" ~ "S",	                            
+                                TRUE ~ "none")) %>% 	                             
+  filter(!aspect_new == "none") # filter out aspect_new = none	 
+
+fia_elevation_aspect_oak <- fia_elev_aspc_join_oak %>%	
+  select(join_plot, elevation_class, species, total_basal, aspect) %>%	
+  mutate(aspect_new = case_when(aspect == "SE" ~ "S",	  
+                                aspect == "SW" ~ "S",	                               
+                                aspect =="NE" ~ "N",	                                
+                                aspect == "NW" ~ "N",	                               
+                                aspect == "N" ~ "N",	                              
+                                aspect == "S" ~ "S",	                              
+                                TRUE ~ "none")) %>% 	                              
+  filter(!aspect_new == "none") # filter out aspect_new = none	
+
+############### VTM Subdata #################	
+
+# check how many plots are in each elevation/aspect grouping	
+vtm_elevation_aspect_count_oak <-vtm_elevation_aspect_oak %>% 
+  group_by(elevation_class, aspect_new) %>% 	  
+  tally()	  
+
+# Note: very low sample sizes. 10 plots in >2500 N, 3 plots in >2500 S, 4 plots in 1000–1499 N, 4 plots in 1000–1499 S	
+
+# create summaries of groupings	# create summaries of groupings
+vtm_elevation_aspect_df_oak <-vtm_elevation_aspect_oak %>% 	
+  group_by(elevation_class, aspect_new)%>% 	  
+    summarize(avg_plot_basal_area = mean(total_basal),	    
+            median = median(total_basal),	            
+            sd = sd(total_basal),	           
+            se = sd((total_basal) / sqrt(n()))) %>% 	            
+  mutate(data  = "VTM")	  
+
+# combine elevation and aspect columns	
+vtm_elevation_aspect_df_oak <-vtm_elevation_aspect_df_oak %>% 
+  unite(plot, c(elevation_class, aspect_new), sep = " ", remove = FALSE)	  
+
+# create summaries of groupings	# create summaries of groupings
+vtm_elevation_aspect_df_oak <-vtm_elevation_aspect_oak %>% 
+  group_by(elevation_class, aspect_new)%>% 	 
+    summarize(avg_plot_basal_area = mean(total_basal),	  
+            median = median(total_basal),	         
+            sd = sd(total_basal),	          
+            se = sd((total_basal) / sqrt(n()))) %>% 	            
+  mutate(data = "VTM")	  
+
+# combine elevation and aspect columns	# combine elevation and aspect columns
+vtm_elevation_aspect_df_oak <-vtm_elevation_aspect_df_oak %>% 	
+  unite(plot, c(elevation_class, aspect_new), sep = " ", remove = FALSE)	  
+
+############### FIA Subdata #################
+
+# check how many plots are in each elevation/aspect grouping	
+fia_elevation_aspect_count_oak <-fia_elevation_aspect_oak %>% 	
+  group_by(elevation_class, aspect_new) %>% 	 
+  tally()	 
+# create summaries of groupings	# create summaries of groupings
+fia_elevation_aspect_df_oak <-fia_elevation_aspect_oak %>% 	
+  group_by(elevation_class, aspect_new)%>% 	 
+    summarize(avg_plot_basal_area = mean(total_basal),	   
+            median = median(total_basal),	           
+            sd = sd(total_basal),	            
+            se = sd((total_basal) / sqrt(n()))) %>% 	          
+  mutate(data = "FIA")	
+
+# combine elevation and aspect columns
+fia_elevation_aspect_df_oak <-fia_elevation_aspect_df_oak %>% 	
+  unite(plot, c(elevation_class, aspect_new), sep = " ", remove = FALSE)	  
+
+ba_elev_aspc_bind_oak <- rbind(vtm_elevation_aspect_df_oak, fia_elevation_aspect_df_oak)	
+
+# Create factor level	# Create factor level
+aspect_type_order <- c("VTM", "FIA")	
+aspect_order <- c("1000–1499 N","1000–1499 S", "1500–1999 N","1500–1999 S", "2000–2499 N","2000–2499 S", ">2500 N", ">2500 S")	
+facet_order<- c("S", "N")
+
+##------------------------------------------------------------------------------------ 	
+# graph 	
+
+ggplot(ba_elev_aspc_bind_oak, aes(x = plot, 
+                              y = avg_plot_basal_area,	                             
+                              group = fct_rev(data)))+	                              
+  geom_col(aes(fill = fct_rev(data)), position=position_dodge(0.9), stat = "identity", color = "black")+	  
+  geom_point(aes(x = plot, y = median, shape = "4"), position=position_dodge(width=0.9)) +	 
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean	 
+  scale_shape_manual(values = 4, labels = "Median", name = "") +	 
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +	 
+  geom_errorbar(position=position_dodge(width=0.9),	 
+                aes(x = plot, 	               
+                    ymin = avg_plot_basal_area - se,	                   
+                    ymax = avg_plot_basal_area+ se),	                  
+                color = "black",	             
+                width = 0.4) +	              
+  #geom_text(aes(label=round(avg_plot_basal_area, 0), x = plot), 	 
+            #position=position_dodge(width = 0.9), 	           
+            #vjust = -3)+	         
+  theme_bw()+	 
+  labs(title = "Tree Basal Area by Elevation and Aspect (Oaks only)", x = "Elevation (m) and Aspect", y = "Average Basal Area (m^2/ha)") +	  
+  scale_y_continuous(lim=c(0,50), expand=c(0,0)) +	
+  theme(panel.border = element_rect(colour = "black", fill=NA),	 
+        legend.title = element_blank(),	       
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),	       
+        legend.key.size = unit(0.4, "cm"), # size of the text/key	       
+        legend.box.background = element_rect(colour = "black"),	      
+        legend.box.margin = margin(2, 2, 2, 2),	      
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends	     
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))	
+
+####################################### % change #######################################   
+pct_change_elev_aspc_ba_oak <- ba_elev_aspc_bind_oak %>%
+  select(avg_plot_basal_area, plot, elevation_class, aspect_new, data) %>%
+  group_by(plot) %>%
+  mutate(pct_change = (lag(avg_plot_basal_area)/avg_plot_basal_area-1)*100*-1)
+
+pct_change_elev_aspc_ba_oak$pct_change
+```

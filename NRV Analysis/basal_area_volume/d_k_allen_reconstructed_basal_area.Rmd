@@ -1,0 +1,36 @@
+---
+title: "basal area reconstruction"
+author: "AMP"
+date: "1/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(here)
+```
+
+```{r}
+data <- read.csv(here("./NRV Analysis/basal_area_volume/d_k_allen_plot_data.csv")) %>% 
+  clean_names()
+```
+minnich and Vizcaino 1988 reported plot values from 3 surveys in SSPM by Allen in 1888. Values were a circumfrence with units in ft and inches with ft in one column and inches in another column
+
+# calc basal area (unbinned)
+```{r}
+data_basal <- data %>% 
+  mutate(dbh_in2 = diameter_in^2,
+         basal_ft2 = 0.005454*dbh_in2, 
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/0.4) %>% # plots = 1acre or 0.4-hectare
+  group_by(plot) %>% 
+  summarize(sum_basal = sum(basal_ha)) %>% 
+  summarize(mean_sum_basal = mean(sum_basal))
+
+```
+

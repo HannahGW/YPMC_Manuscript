@@ -1,0 +1,1141 @@
+---
+title: "Basal Area Stats"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Packages
+```{r}
+library(tidyverse)
+library(janitor)
+library(effsize)
+library(MASS)
+library(broom)
+library(kableExtra)
+library(here)
+library(MKinfer) # for boot.t.test
+```
+
+# load data
+```{r}
+vtm <- read_csv(here("./vtm_data/vtm_dataset_750m_buffer_FINAL.csv"))
+fia <- read.csv(here("./FIA Data/Final FIA data and code used for analysis/final_binded_fia_ypmc_data.csv")) 
+
+vtm_slope <- read.csv(here("./NRV Analysis/vtm_slope.csv"))
+fia_slope <- read.csv(here("./NRV Analysis/fia_slope.csv"))
+```
+
+# Tidy Data 
+```{r}
+########################################## VTM ##############################################
+vtm_tidy <- vtm %>% 
+  dplyr::select(-species) %>% 
+  dplyr::rename(species = abbreviation) %>% 
+  pivot_longer('dbh_4_11':'dbh_36',
+               names_to = "dbh_class",
+               values_to = "dbh_count") %>% 
+  filter(dbh_count != 0) %>% # get error when use uncount() and there are rows with a value of 0
+  tidyr::uncount(dbh_count) %>% 
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine"),
+         species = str_replace(species, pattern = "PICO3", "PICO")) %>% # change pico3 to pico 
+  mutate(species = fct_relevel(species, levels =c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE"))) %>% 
+  mutate(elev_m = elevation/3.281) %>% 
+   mutate(elevation_class = case_when(
+    elev_m < 500 ~ "0-500",
+    elev_m <= 1000 ~ "500-1,000",
+    elev_m <= 1500 ~ "1,000-1,500",
+    elev_m <= 2000 ~ "1,500-2,000",
+    elev_m <= 2500 ~ "2,000-2,500",
+    elev_m >= 2500 ~ "2,500+"
+  )) %>% 
+  mutate(elevation_class = as.factor(elevation_class),
+         elevation_class = fct_relevel(elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+")))%>% 
+  mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Fire Tolerant/Shade Intolerant",
+    species %in% c("ABCO", "CADE") ~ "Fire Intolerant/Shade Tolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  ))
+
+########################################## FIA ##############################################
+fia_tidy <- fia %>% 
+  filter(!is.na(dbh)) %>%
+  mutate(dbh_class = case_when(
+    dbh < 10.16 ~ "0–10.2",
+    dbh <= 30.4 ~ "10.2–30.4",
+    dbh <= 60.9 ~ "30.5–60.9",
+    dbh < 91.44 ~ "61.0–91.3",
+    dbh >= 91.44 ~ "91.4+"
+  )) %>%
+  filter(dbh_class != "0–10.2") %>%
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine")) %>% 
+ mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Fire Tolerant/Shade Intolerant",
+    species %in% c("ABCO", "CADE") ~ "Fire Intolerant/Shade Tolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(admin_forest = str_to_lower(admin_forest)) %>% 
+  mutate(admin_forest = str_replace(admin_forest, pattern = "bdf", "sbnf"),
+         admin_forest = str_replace(admin_forest, pattern = "lpf", "lpnf")) %>% 
+  mutate(elevation_class = case_when(elev <= 1500 ~ "1,000-1,500",
+                                     elev <= 2000 ~ "1,500-2,000",
+                                     elev <= 2500 ~ "2,000-2,500",
+                                     elev >= 2500 ~ "2,500+")) 
+
+# fct_relevel wouldn't work properly in mutate() for these two variables in fia data
+fia_tidy$species <- factor(fia_tidy$species, levels= c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE")) 
+fia_tidy$elevation_class <- factor(fia_tidy$elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+"))
+  
+```
+
+# Calculate Basal area
+
+## VTM Data  )) %>% 
+
+
+```{r}
+#################################### 3 smallest DBH classes ##############################
+vtm_basal_smallest <- vtm_tidy %>% 
+  filter(dbh_class != "dbh_36") %>% 
+  mutate(dbh_class_mid = case_when(         # assign dbh bin midpoints in INCHES
+    dbh_class == "dbh_4_11" ~ "7.5",
+    dbh_class == "dbh_12_23" ~ "17.5",
+    dbh_class == "dbh_24_35" ~ "29.5")) %>% 
+  mutate(dbh_class_mid = as.numeric(dbh_class_mid)) %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(dbh_in2 = dbh_class_mid^2,
+         basal_ft2 = 0.005454*dbh_in2, 
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/slope_corrected_area) %>% 
+  group_by(plotkey, species) %>% 
+  summarize(sum_basal_smallest = sum(basal_ha)) 
+
+#################################### largest DBH classes ##############################
+
+vtm_basal_largest <- vtm_tidy %>% 
+  filter(dbh_class == "dbh_36") %>% 
+  mutate(dbh_final = case_when(
+    species == "ABCO" ~ 131,
+    species == "CADE" ~ 145,
+    species == "PICO" ~ 99 + 5,
+    #species == "PIJE" ~ 104 + 12,
+    species == "PILA" ~ 108 + 15,
+    #species == "PIPO" ~ 110 + 18,
+    species == "Yellow Pine" ~ 104 + 13,
+    species == "PSMA" ~ 126,
+    species == "QUCH" ~ 98,
+    species == "QUKE" ~ 93 # may change later after looking at all the raw data
+  )) %>% 
+  inner_join(vtm_slope, by = "plotkey") %>% 
+  mutate(dbh_final = as.numeric(dbh_final)) %>% 
+  mutate(dbh_final_mid = (dbh_final + 91.44)/2) %>% 
+  mutate(dbh_in2_final = (dbh_final_mid/2.54)^2,
+         basal_ft2_final = 0.005454*dbh_in2_final, 
+         basal_m2_final = basal_ft2_final/10.764,
+         basal_ha_final = basal_m2_final/slope_corrected_area) %>% 
+  group_by(plotkey, species) %>% 
+  summarize(sum_basal_largest = sum(basal_ha_final)) 
+
+#################################### ALL DBH classes ##############################
+
+# join
+vtm_basal_all <- full_join(vtm_basal_smallest, vtm_basal_largest, by = c("plotkey", "species"))
+
+# convert NAs to 0s
+vtm_basal_all[is.na(vtm_basal_all)] <- 0
+
+# sum basal area for smallest and largest class
+vtm_basal_all_tidy <- vtm_basal_all %>%
+  group_by(plotkey, species) %>% 
+  mutate(total_basal = sum_basal_smallest + sum_basal_largest) %>% 
+  mutate(data = "VTM") # 195 unique plots which matches up with the raw data
+
+################################### Landscape format ###############################
+vtm_landscape <- vtm_basal_all_tidy %>%
+  dplyr::select(-sum_basal_smallest, -sum_basal_largest) %>% 
+  pivot_wider(names_from = species,
+              values_from = total_basal) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>%
+  pivot_longer(3:10,
+               names_to = 'species',
+               values_to = "total_landscape_basal") %>%
+  mutate(species = case_when( 
+    species == "abco" ~ "ABCO",
+    species == "cade" ~ "CADE",
+    species == "pico" ~ "PICO",
+    species == "pila" ~ "PILA",
+    species == "psma" ~ "PSMA",
+    species == "yellow_pine" ~ "Yellow Pine",
+    species == "quch" ~ "QUCH",
+    species == "quke" ~ "QUKE",
+  )) %>% 
+  mutate(plotkey=as.character(plotkey))
+
+#################################### Merge background data #################################
+vtm_tidy2 <- vtm_tidy %>% 
+  dplyr::select(plotkey, species, national_forest_name, exposure, elevation_class, shade_tolerance, shade_tolerance2, lifeform)
+
+vtm_landscape_all <- left_join(vtm_landscape, vtm_tidy2, by= c("plotkey", "species"))
+
+vtm_landscape_all <- vtm_landscape_all %>% 
+  distinct(.keep_all=T)
+
+```
+
+## FIA Basal area
+```{r}
+# basal area for trees only in the 3 smallest size classes
+fia_basal_smallest <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  mutate(dbh_class = case_when( # assign dbh bin midpoints in INCHES
+    dbh < 10.2 ~ "0",       
+    dbh <= 30.4 ~ "7.5",  
+    dbh <= 60.9 ~ "17.5", 
+    dbh < 91.44 ~ "29.5", 
+    dbh >= 91.44 ~ "tbd"
+  )) %>% 
+  filter(dbh_class != "0",
+         dbh_class != "tbd") %>% 
+  mutate(dbh_class = as.numeric(dbh_class)) %>% 
+  inner_join(fia_slope, by = "join_plot") %>% 
+  mutate(dbh_in2 = dbh_class^2,
+         basal_ft2 = 0.005454*dbh_in2, 
+         basal_m2 = basal_ft2/10.764,
+         basal_ha = basal_m2/slope_corrected_area) %>% 
+  group_by(join_plot, species) %>% 
+  summarize( sum_basal_smallest = sum(basal_ha)) 
+
+# basal area for trees in the largest size class
+fia_basal_largest <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(dbh >= 91.44) %>% #91.44 cm is the min DBH for the largest size class
+  inner_join(fia_slope, by = "join_plot") %>% 
+  mutate(dbh_final = case_when(
+    species == "ABCO" ~ 131,
+    species == "CADE" ~ 145,
+    species == "PICO" ~ 104,
+    #species == "PIJE" ~ 104 + 12,
+    species == "PILA" ~ 108 + 15,
+    #species == "PIPO" ~ 110 + 18,
+    species == "PSMA" ~ 126,
+    species == "Yellow Pine" ~ 104 + 13,
+    species == "QUCH" ~ 98,
+    species == "QUKE" ~ 93)) %>% 
+  mutate(dbh_final = as.numeric(dbh_final),
+         dbh_final_mid = (dbh_final + 91.44)/2) %>% 
+  mutate(dbh_in2_final = (dbh_final_mid/2.54)^2,
+         basal_ft2_final = 0.005454*dbh_in2_final, 
+         basal_m2_final = basal_ft2_final/10.764,
+         basal_ha_final = basal_m2_final/slope_corrected_area) %>% 
+  group_by(join_plot, species) %>% 
+  summarize(sum_basal_largest = sum(basal_ha_final))
+
+#################################### ALL DBH classes ##############################
+
+# join basal area
+fia_basal_all <- full_join(fia_basal_smallest, fia_basal_largest, by = c("join_plot", "species"))
+
+# convert NAs to 0s
+fia_basal_all[is.na(fia_basal_all)] <- 0
+
+# sum basal area for smallest and largest class
+fia_basal_all_tidy <- fia_basal_all %>%
+  group_by(join_plot) %>% 
+  mutate(total_basal = sum_basal_smallest + sum_basal_largest) %>% 
+  mutate(data = "FIA") 
+
+################################### Landscape format ###############################
+fia_landscape <- fia_basal_all_tidy %>%
+  dplyr::select(-sum_basal_smallest, -sum_basal_largest) %>% 
+  pivot_wider(names_from = species,
+              values_from = total_basal) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         psma = replace_na(psma, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>%
+  pivot_longer(3:10,
+               names_to = 'species',
+               values_to = "total_landscape_basal") %>%
+  mutate(species = case_when( 
+    species == "abco" ~ "ABCO",
+    species == "cade" ~ "CADE",
+    species == "pico" ~ "PICO",
+    species == "pila" ~ "PILA",
+    species == "psma" ~ "PSMA",
+    species == "yellow_pine" ~ "Yellow Pine",
+    species == "quch" ~ "QUCH",
+    species == "quke" ~ "QUKE",
+  )) 
+
+#################################### Merge background data #################################
+fia_tidy2 <- fia_tidy %>% 
+  dplyr::select(join_plot, species, admin_forest, elevation_class, shade_tolerance, shade_tolerance2, lifeform) # originally, I also filtered by aspect_qualitative, but some plots (n=9) would add an extra row bc some plots had more than 1 aspect recorded. whcih is weird, but all the trees had unique dbhs and hieghts and other quantiative calues. maybe the plot spanned several aspects?? anyway, if we divide the data by aspect its best to remove those plots from calculation  
+
+fia_landscape_all <- left_join(fia_landscape, fia_tidy2, by= c("join_plot", "species"))
+
+fia_landscape_all <- fia_landscape_all %>% 
+  distinct(.keep_all=T) %>% 
+  rename(plotkey = join_plot)
+  
+  
+```
+
+# Stats
+
+## Total landscape basal area change
+```{r}
+##################################### sub data ####################################
+# sum basal area by plot for vtm
+vtm_total <- vtm_landscape %>% 
+  group_by(plotkey) %>% 
+  summarise(sum_total_basal = sum(total_landscape_basal))%>% 
+  mutate(time_frame =  "VTM")  
+  
+# sum basal area by plot for fia
+fia_total <- fia_landscape_all %>%
+  group_by(plotkey) %>% 
+  summarise(sum_total_basal = sum(total_landscape_basal))%>% 
+  mutate(time_frame =  "FIA") 
+
+total <- rbind(vtm_total, fia_total) 
+
+##################################### Check assumptions ############################################
+## assumptions from allisons esm 206 lecture 11
+
+# 1. Continuous observations are randomly drawn from populations --> yes
+
+# 2. data is normally distributed --> sure
+ggplot(vtm_total, aes(x=sum_total_basal)) + geom_histogram() # right skewed
+ggplot(fia_total, aes(x=sum_total_basal)) + geom_histogram() +
+  scale_x_continuous()# right skewed
+ggplot(total, aes(x=sum_total_basal, fill = time_frame)) +geom_histogram()
+
+ggplot(vtm_total, aes(sample=sum_total_basal)) + geom_qq() # points kinda curved
+ggplot(fia_total, aes(sample=sum_total_basal)) + geom_qq() # linear enough?
+
+## use central limit thereom to conlcude the means will follow a normal distribution (especially bc the sample size is large enough)
+
+# 3. Equal Variances -> do NOT need to worry about this when using the welch t test (which IS parametric)
+
+# 4. Independent samples and observations --> yes
+
+
+##################################### welchs 2 sample two-SIDED t-test ########################### 
+
+total_test <- t.test(fia_total$sum_total_basal, vtm_total$sum_total_basal, paired = F )
+
+total_test_summary <- broom::tidy(total_test)
+
+total_effsize <- effsize::cohen.d(fia_total$sum_total_basal, vtm_total$sum_total_basal)
+total_effsize_df <- as.data.frame(total_effsize$estimate) 
+
+```
+
+## species
+```{r}
+##################################### sub data ####################################
+
+fia_species <- fia_landscape %>%
+  rename(plotkey = join_plot) %>% 
+  mutate(plotkey = as.character(plotkey))
+
+species <- rbind(vtm_landscape, fia_species) 
+
+
+vtm_species_pivot <- vtm_landscape %>% 
+  pivot_wider(names_from = species,
+              values_from = total_landscape_basal) %>% 
+  clean_names()
+
+fia_species_pivot <- fia_species %>% 
+  pivot_wider(names_from = species,
+              values_from = total_landscape_basal) %>% 
+  clean_names()
+
+##################################### Check assumptions ############################################
+## assumptions from allisons esm 206 lecture 11
+
+# 1. Continuous observations are randomly drawn from populations --> yes
+
+# 2. data is normally distributed --> sure
+#ggplot(vtm_species, aes(x=total_landscape_basal)) + geom_histogram() + facet_wrap(~species) # VERY right skewed
+ggplot(fia_species, aes(x=total_landscape_basal)) + geom_histogram() +
+  scale_x_continuous() + facet_wrap(~species) # VERY right skewed
+# ggplot(species, aes(x=total_landscape_basal, fill = time_frame)) +geom_histogram() + facet_wrap(~species) 
+
+ggplot(vtm_landscape, aes(sample=total_landscape_basal)) + geom_qq() + facet_wrap(~species) # points very curved
+ggplot(fia_species, aes(sample=total_landscape_basal)) + geom_qq() + facet_wrap(~species) # points very curved; 
+
+
+# 3. Equal Variances -> do NOT need to worry about this when using the welch t test (which IS parametric)
+
+# 4. Independent samples and observations --> yes
+
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+##### ABCO #####
+species_abco_test <- t.test(fia_species_pivot$abco, vtm_species_pivot$abco, paired = F)
+
+species_abco_test_summary <- broom::tidy(species_abco_test)
+
+species_abco_effsize <- effsize::cohen.d(fia_species_pivot$abco, vtm_species_pivot$abco)
+species_abco_effsize_df <- as.data.frame(species_abco_effsize$estimate) 
+
+species_abco_boot <- boot.t.test(fia_species_pivot$abco, vtm_species_pivot$abco)
+species_abco_boot_summary <- broom::tidy(species_abco_boot)
+
+
+##### CADE #####
+species_cade_test <- t.test(fia_species_pivot$cade, vtm_species_pivot$cade, paired = F )
+
+species_cade_test_summary <- broom::tidy(species_cade_test)
+
+species_cade_effsize <- effsize::cohen.d(fia_species_pivot$cade, vtm_species_pivot$cade)
+species_cade_effsize_df <- as.data.frame(species_cade_effsize$estimate) 
+
+
+species_cade_boot <- boot.t.test(fia_species_pivot$cade, vtm_species_pivot$cade )
+species_cade_boot_summary <- broom::tidy(species_cade_boot)
+
+##### PICO #####
+species_pico_test <- t.test(fia_species_pivot$pico, vtm_species_pivot$pico, paired = F)
+
+species_pico_test_summary <- broom::tidy(species_pico_test)
+
+species_pico_effsize <- effsize::cohen.d(fia_species_pivot$pico, vtm_species_pivot$pico)
+species_pico_effsize_df <- as.data.frame(species_pico_effsize$estimate) 
+
+
+species_pico_boot <- boot.t.test(fia_species_pivot$pico, vtm_species_pivot$pico)
+species_pico_boot_summary <- broom::tidy(species_pico_boot)
+
+##### PILA #####
+species_pila_test <- t.test(fia_species_pivot$pila, vtm_species_pivot$pila, paired = F )
+
+species_pila_test_summary <- broom::tidy(species_pila_test)
+
+species_pila_effsize <- effsize::cohen.d(fia_species_pivot$pila, vtm_species_pivot$pila)
+species_pila_effsize_df <- as.data.frame(species_pila_effsize$estimate) 
+
+
+species_pila_boot <- boot.t.test(fia_species_pivot$pila, vtm_species_pivot$pila )
+species_pila_boot_summary <- broom::tidy(species_pila_boot)
+
+##### PSMA #####
+species_psma_test <- t.test(fia_species_pivot$psma, vtm_species_pivot$psma, paired = F )
+
+species_psma_test_summary <- broom::tidy(species_psma_test)
+
+species_psma_effsize <- effsize::cohen.d(fia_species_pivot$psma, vtm_species_pivot$psma)
+species_psma_effsize_df <- as.data.frame(species_psma_effsize$estimate) 
+
+
+species_psma_boot <- boot.t.test(fia_species_pivot$psma, vtm_species_pivot$psma )
+species_psma_boot_summary <- broom::tidy(species_psma_boot)
+
+##### YELLOW PINE #####
+species_yp_test <- t.test(fia_species_pivot$yellow_pine, vtm_species_pivot$yellow_pine, paired = F )
+
+species_yp_test_summary <- broom::tidy(species_yp_test)
+
+species_yp_effsize <- effsize::cohen.d(fia_species_pivot$yellow_pine, vtm_species_pivot$yellow_pine)
+species_yp_effsize_df <- as.data.frame(species_yp_effsize$estimate) 
+
+
+species_yp_boot <- boot.t.test(fia_species_pivot$yellow_pine, vtm_species_pivot$yellow_pine )
+species_yp_boot_summary <- broom::tidy(species_yp_boot)
+
+##### QUCH #####
+species_quch_test <- t.test(fia_species_pivot$quch, vtm_species_pivot$quch, paired = F )
+
+species_quch_test_summary <- broom::tidy(species_quch_test)
+
+species_quch_effsize <- effsize::cohen.d(fia_species_pivot$quch, vtm_species_pivot$quch)
+species_quch_effsize_df <- as.data.frame(species_quch_effsize$estimate) 
+
+
+species_quch_boot <- boot.t.test(fia_species_pivot$quch, vtm_species_pivot$quch )
+species_quch_boot_summary <- broom::tidy(species_quch_boot)
+
+##### QUKE #####
+species_quke_test <- t.test(fia_species_pivot$quke, vtm_species_pivot$quke, paired = F)
+
+
+species_quke_test_summary <- broom::tidy(species_quke_test)
+
+species_quke_effsize <- effsize::cohen.d(fia_species_pivot$quke, vtm_species_pivot$quke)
+species_quke_effsize_df <- as.data.frame(species_quke_effsize$estimate) 
+
+ 
+
+species_quke_boot <- boot.t.test(fia_species_pivot$quke, vtm_species_pivot$quke)
+species_quke_boot_summary <- broom::tidy(species_quke_boot)
+
+
+```
+
+## lifeform 
+```{r}
+##################################### sub data ####################################
+
+vtm_lifeform <- vtm_landscape %>% 
+  mutate(lifeform = case_when(
+     species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  group_by(plotkey, lifeform) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal)) %>% 
+  mutate(time_frame = "VTM")
+  
+  
+# sum basal area by plot for fia
+fia_lifeform <- fia_landscape_all %>%
+  mutate(lifeform = case_when(
+     species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  group_by(plotkey, lifeform) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal)) %>% 
+  mutate(plotkey = as.character(plotkey),
+         time_frame =  "FIA") 
+
+lifeform <- rbind(vtm_lifeform, fia_lifeform) 
+
+vtm_lifeform_pivot <- vtm_lifeform %>% 
+  pivot_wider(names_from = lifeform, 
+              values_from = sum_total_basal) 
+
+fia_lifeform_pivot <- fia_lifeform %>% 
+  pivot_wider(names_from = lifeform, 
+              values_from = sum_total_basal) 
+
+##################################### Check assumptions ############################################
+## assumptions from allisons esm 206 lecture 11
+
+# 1. Continuous observations are randomly drawn from populations --> yes
+
+# 2. data is normally distributed --> sure
+ggplot(vtm_lifeform, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~lifeform) 
+ggplot(fia_lifeform, aes(x=sum_total_basal)) + 
+  geom_histogram() +
+  scale_x_continuous() + facet_wrap(~lifeform) 
+ggplot(lifeform, aes(x=sum_total_basal, fill = time_frame)) +geom_histogram() + facet_wrap(~lifeform) 
+
+ggplot(vtm_lifeform, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~lifeform) # conifer points linear enough, but oak points very curved
+ggplot(fia_lifeform, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~lifeform) # conifer points linear enough, but oak points very curved
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+#### Conifers ####
+lifeform_conifers_test <- t.test(fia_lifeform_pivot$Conifers, vtm_lifeform_pivot$Conifers, paired = F )
+
+lifeform_test_conifers_summary <- broom::tidy(lifeform_conifers_test)
+
+lifeform_conifers_effsize <- effsize::cohen.d(fia_lifeform_pivot$Conifers, vtm_lifeform_pivot$Conifers)
+lifeform_conifers_effsize_df <- as.data.frame(lifeform_conifers_effsize$estimate)
+
+#### Oaks ####
+lifeform_Oaks_test <- t.test(fia_lifeform_pivot$Oaks, vtm_lifeform_pivot$Oaks, paired = F )
+
+lifeform_test_oaks_summary <- broom::tidy(lifeform_Oaks_test)
+
+lifeform_oaks_effsize <- effsize::cohen.d(fia_lifeform_pivot$Oaks, vtm_lifeform_pivot$Oaks)
+lifeform_oaks_effsize_df <- as.data.frame(lifeform_oaks_effsize$estimate)
+
+# lifeform_oaks_boot <- boot.t.test(fia_lifeform_pivot$Oaks, vtm_lifeform_pivot$Oaks )
+# lifeform_oaks_boot_summary <- broom::tidy(lifeform_oaks_boot)
+
+```
+
+## shade/fire tolerance
+```{r}
+##################################### sub data ####################################
+
+vtm_shade2 <- vtm_landscape %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  group_by(plotkey, shade_tolerance2) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal)) %>% 
+  mutate(time_frame = "VTM")
+  
+  
+# sum basal area by plot for fia
+fia_shade2 <- fia_landscape_all %>%
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  group_by(plotkey, shade_tolerance2) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal)) %>% 
+  mutate(plotkey = as.character(plotkey),
+         time_frame =  "FIA") 
+
+shade2 <- rbind(vtm_shade2, fia_shade2) 
+
+vtm_shade2_pivot <- vtm_shade2 %>% 
+  pivot_wider(names_from = shade_tolerance2, 
+              values_from = sum_total_basal) %>% 
+  clean_names()
+
+fia_shade2_pivot <- fia_shade2 %>% 
+  pivot_wider(names_from = shade_tolerance2, 
+              values_from = sum_total_basal) %>% 
+  clean_names()
+
+##################################### Check assumptions ############################################
+## assumptions from allisons esm 206 lecture 11
+
+# 1. Continuous observations are randomly drawn from populations --> yes
+
+# 2. data is normally distributed --> sure
+ggplot(vtm_shade2, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~shade_tolerance2) 
+ggplot(fia_shade2, aes(x=sum_total_basal)) + 
+  geom_histogram() +
+  scale_x_continuous() + facet_wrap(~shade_tolerance2) 
+ggplot(shade2, aes(x=sum_total_basal, fill = time_frame)) +geom_histogram() + facet_wrap(~shade_tolerance2) 
+
+ggplot(vtm_shade2, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~shade_tolerance2) # sift points linear enough, but stfi points very curved
+ggplot(fia_shade2, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~shade_tolerance2) # sift points linear enough, but stfi points very curved
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+#### STFI ####
+shade_stfi_test <- t.test(fia_shade2_pivot$shade_tolerant_fire_intolerant, vtm_shade2_pivot$shade_tolerant_fire_intolerant, paired = F )
+
+shade2_stfi_test_summary <- broom::tidy(shade_stfi_test)
+
+stfi_effsize <- effsize::cohen.d(fia_shade2_pivot$shade_tolerant_fire_intolerant, vtm_shade2_pivot$shade_tolerant_fire_intolerant)
+stfi_effsize_df <- as.data.frame(stfi_effsize$estimate)
+
+# shade_stfi_boot <- boot.t.test(fia_shade2_pivot$shade_tolerant_fire_intolerant, vtm_shade2_pivot$shade_tolerant_fire_intolerant )
+# shade_stfi_boot_summary <- broom::tidy(shade_stfi_boot)
+
+
+#### SIFT ####
+shade2_sift_test <- t.test(fia_shade2_pivot$shade_intolerant_fire_tolerant, vtm_shade2_pivot$shade_intolerant_fire_tolerant, paired = F )
+
+shade2_sift_test_summary <- broom::tidy(shade2_sift_test)
+
+sift_effsize <- effsize::cohen.d(fia_shade2_pivot$shade_intolerant_fire_tolerant, vtm_shade2_pivot$shade_intolerant_fire_tolerant)
+sift_effsize_df <- as.data.frame(sift_effsize$estimate)
+
+
+```
+
+
+## National Forest
+```{r}
+##################################### sub data ####################################
+#VTM
+vtm_nf <- vtm_landscape %>% 
+  group_by(plotkey) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal))
+
+vtm_tidy2 <- vtm_tidy %>% 
+  dplyr::select(plotkey, national_forest_name) 
+
+vtm_nf_all <- inner_join(vtm_nf, vtm_tidy2, by="plotkey")
+
+vtm_anf <- vtm_nf_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(national_forest_name == "anf") %>% 
+  mutate(time_frame = "VTM")
+vtm_lpnf <- vtm_nf_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(national_forest_name == "lpnf") %>% 
+  mutate(time_frame = "VTM")
+vtm_sbnf <- vtm_nf_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(national_forest_name == "sbnf") %>% 
+  mutate(time_frame = "VTM")
+
+# FIA
+fia_nf <- fia_landscape %>% 
+  group_by(join_plot) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal))
+
+fia_tidy2 <- fia_tidy %>% 
+  dplyr::select(join_plot, admin_forest) 
+
+fia_nf_all <- inner_join(fia_nf, fia_tidy2, by="join_plot")
+
+fia_anf <- fia_nf_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(admin_forest == "anf") %>% 
+  rename(plotkey = join_plot,
+         national_forest_name = admin_forest) %>% 
+  mutate(time_frame = "FIA")
+fia_lpnf <- fia_nf_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(admin_forest == "lpnf") %>% 
+  rename(plotkey = join_plot,
+           national_forest_name = admin_forest) %>% 
+  mutate(time_frame = "FIA")
+fia_sbnf <- fia_nf_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(admin_forest == "sbnf") %>% 
+  rename(plotkey = join_plot,
+         national_forest_name = admin_forest) %>% 
+  mutate(time_frame = "FIA")
+
+anf <- rbind(vtm_anf, fia_anf)
+lpnf <- rbind(vtm_lpnf, fia_lpnf)
+sbnf <- rbind(vtm_sbnf, fia_sbnf)
+
+##################################### Check assumptions ############################################
+
+ggplot(anf, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(lpnf, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(sbnf, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+
+ggplot(anf, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(lpnf, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(sbnf, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+#### ANF ####
+anf_test <- t.test(fia_anf$sum_total_basal, vtm_anf$sum_total_basal, paired = F )
+
+anf_test_summary <- broom::tidy(anf_test)
+
+anf_effsize <- effsize::cohen.d(fia_anf$sum_total_basal, vtm_anf$sum_total_basal)
+anf_effsize_df <- as.data.frame(anf_effsize$estimate)
+
+#### LPNF ####
+lpnf_test <- t.test(fia_lpnf$sum_total_basal, vtm_lpnf$sum_total_basal, paired = F )
+
+lpnf_test_summary <- broom::tidy(lpnf_test)
+
+lpnf_effsize <- effsize::cohen.d(fia_lpnf$sum_total_basal, vtm_lpnf$sum_total_basal)
+lpnf_effsize_df <- as.data.frame(lpnf_effsize$estimate)
+
+#### SBNF ####
+sbnf_test <- t.test(fia_sbnf$sum_total_basal, vtm_sbnf$sum_total_basal, paired = F )
+
+sbnf_test_summary <- broom::tidy(sbnf_test)
+
+sbnf_effsize <- effsize::cohen.d(fia_sbnf$sum_total_basal, vtm_sbnf$sum_total_basal)
+sbnf_effsize_df <- as.data.frame(sbnf_effsize$estimate)
+
+```
+
+## elevation
+```{r}
+##################################### sub data ####################################
+#VTM
+vtm_elev <- vtm_landscape %>% 
+  group_by(plotkey) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal))
+
+vtm_tidy3 <- vtm_tidy %>% 
+  dplyr::select(plotkey, elevation_class) %>% 
+  mutate()
+
+vtm_elev_all <- inner_join(vtm_elev, vtm_tidy3, by="plotkey")
+
+vtm_elev1 <- vtm_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  mutate(time_frame = "VTM")
+vtm_elev2 <- vtm_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  mutate(time_frame = "VTM")
+vtm_elev3 <- vtm_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  mutate(time_frame = "VTM")
+vtm_elev4 <- vtm_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,500+") %>% 
+  mutate(time_frame = "VTM")
+
+# FIA
+fia_elev <- fia_landscape %>% 
+  group_by(join_plot) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal)) %>% 
+  mutate(join_plot = as.character(join_plot))
+
+fia_tidy3 <- fia_tidy %>% 
+  dplyr::select(join_plot, elevation_class) %>% 
+  mutate(join_plot = as.character(join_plot))
+
+# Check sample sizes
+fia_elev_sample_size <- fia_tidy3 
+
+fia_elev_all <- inner_join(fia_elev, fia_tidy3, by="join_plot")
+
+fia_elev1 <- fia_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")
+fia_elev2 <- fia_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,500-2,000") %>%
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")
+fia_elev3 <- fia_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")
+fia_elev4 <- fia_elev_all %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,500+") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")
+
+elev1 <- rbind(vtm_elev1, fia_elev1)
+elev2 <- rbind(vtm_elev2, fia_elev2)
+elev3 <- rbind(vtm_elev3, fia_elev3)
+elev4 <- rbind(vtm_elev4, fia_elev4)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev1, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(elev2, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(elev3, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(elev4, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+
+ggplot(elev1, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(elev2, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(elev3, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(elev4, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+#### 1,000-1,500 ####
+elev1_test <- t.test(fia_elev1$sum_total_basal, vtm_elev1$sum_total_basal, paired = F)
+
+elev1_test_summary <- broom::tidy(elev1_test)
+
+elev1_effsize <- effsize::cohen.d(fia_elev1$sum_total_basal, vtm_elev1$sum_total_basal)
+elev1_effsize_df <- as.data.frame(elev1_effsize$estimate)
+
+#### 1,500- 2,000 ####
+elev2_test <- t.test(fia_elev2$sum_total_basal, vtm_elev2$sum_total_basal, paired = F )
+
+elev2_test_summary <- broom::tidy(elev2_test)
+
+elev2_effsize <- effsize::cohen.d(fia_elev2$sum_total_basal, vtm_elev2$sum_total_basal)
+elev2_effsize_df <- as.data.frame(elev2_effsize$estimate)
+
+#### 2,000-1,500 ####
+elev3_test <- t.test(fia_elev3$sum_total_basal, vtm_elev3$sum_total_basal, paired = F )
+
+elev3_test_summary <- broom::tidy(elev3_test)
+
+elev3_effsize <- effsize::cohen.d(fia_elev3$sum_total_basal, vtm_elev3$sum_total_basal)
+elev3_effsize_df <- as.data.frame(elev3_effsize$estimate)
+
+#### 2,500+ ####
+elev4_test <- t.test(fia_elev4$sum_total_basal, vtm_elev4$sum_total_basal, paired = F )
+
+elev4_test_summary <- broom::tidy(elev4_test)
+
+elev4_effsize <- effsize::cohen.d(fia_elev4$sum_total_basal, vtm_elev4$sum_total_basal)
+elev4_effsize_df <- as.data.frame(elev4_effsize$estimate)
+
+```
+
+
+## elevation and aspect
+
+sample sizes too small for 100-1500 and 2500+ to do stats
+```{r}
+##################################### sub data ####################################
+#VTM
+vtm_elev11 <- vtm_landscape %>% 
+  group_by(plotkey) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal))
+
+vtm_tidy4 <- vtm_tidy %>% 
+  dplyr::select(plotkey, elevation_class, exposure) %>% 
+  mutate(aspect = case_when(
+    exposure %in% c("NE", "NW", "N") ~ 'n',
+    exposure %in% c("SE", "SW", "S") ~ "s",
+    TRUE ~ "Other"
+  )) %>% 
+  filter(aspect != "Other") %>% 
+  dplyr::select(-exposure)
+
+vtm_elev_all1 <- inner_join(vtm_elev11, vtm_tidy4, by="plotkey")
+
+vtm_elev1n <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  filter(aspect == "n") %>% 
+  mutate(time_frame = "VTM") #n=12
+vtm_elev1s <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  filter(aspect == "s") %>% 
+  mutate(time_frame = "VTM") #n=4
+  
+vtm_elev2n <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  filter(aspect == "n") %>% 
+  mutate(time_frame = "VTM") #n=56
+
+vtm_elev2s <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,500-2,000") %>% 
+  filter(aspect == "s") %>% 
+  mutate(time_frame = "VTM") #n=18
+
+vtm_elev3n <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(aspect == "n") %>% 
+  mutate(time_frame = "VTM") #n=52
+vtm_elev3s <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(aspect == "s") %>% 
+  mutate(time_frame = "VTM") #n=23
+
+vtm_elev4n <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,500+") %>% 
+  filter(aspect == "n") %>% 
+  mutate(time_frame = "VTM") #n=10
+vtm_elev4s <- vtm_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,500+") %>% 
+  filter(aspect == "s") %>% 
+  mutate(time_frame = "VTM") #n=3
+
+
+# FIA
+fia_elev11 <- fia_landscape %>% 
+  group_by(join_plot) %>%
+  summarise(sum_total_basal = sum(total_landscape_basal))%>% 
+  mutate(join_plot = as.character(join_plot))
+
+fia_tidy4 <- fia_tidy %>% 
+  dplyr::select(join_plot, elevation_class, aspect_qualitative) %>% 
+  mutate(join_plot = as.character(join_plot)) %>% 
+  mutate(aspect = case_when(
+    aspect_qualitative %in% c("NE", "NW", "N") ~ 'n',
+    aspect_qualitative %in% c("SE", "SW", "S") ~ "s",
+    TRUE ~ "Other"
+  )) %>% 
+  filter(aspect != "Other") %>% 
+  dplyr::select(-aspect_qualitative) 
+
+fia_elev_all1 <- inner_join(fia_elev11, fia_tidy4, by="join_plot")
+
+fia_elev1n <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  rename(plotkey = join_plot) %>% 
+  filter(aspect == "n") %>% 
+  mutate(time_frame = "FIA") #n=9
+fia_elev1s <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,000-1,500") %>% 
+  rename(plotkey = join_plot) %>% 
+  filter(aspect == "s") %>% 
+  mutate(time_frame = "FIA") #n=7
+
+fia_elev2n <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,500-2,000") %>%
+  filter(aspect == "n") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA") #n=43
+fia_elev2s <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "1,500-2,000") %>%
+  filter(aspect == "s") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA") #n=18
+
+fia_elev3n <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(aspect == "n") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")#n=37
+fia_elev3s <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,000-2,500") %>% 
+  filter(aspect == "s") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")#n=25
+
+fia_elev4n <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,500+") %>% 
+  filter(aspect == "n") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")#n=8
+fia_elev4s <- fia_elev_all1 %>% 
+  distinct(.keep_all=T) %>% 
+  filter(elevation_class == "2,500+") %>% 
+  filter(aspect == "s") %>% 
+  rename(plotkey = join_plot) %>% 
+  mutate(time_frame = "FIA")#n=9
+
+elev2n <- rbind(vtm_elev2n, fia_elev2n)
+elev2s <- rbind(vtm_elev2s, fia_elev2s)
+elev3n <- rbind(vtm_elev3n, fia_elev3n)
+elev3s <- rbind(vtm_elev3s, fia_elev3s)
+
+##################################### Check assumptions ############################################
+
+ggplot(elev2n, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(elev2s, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(elev3n, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+ggplot(elev3s, aes(x=sum_total_basal)) + geom_histogram() + facet_wrap(~time_frame)
+
+ggplot(elev2n, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(elev2s, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(elev3n, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+ggplot(elev3s, aes(sample=sum_total_basal)) + geom_qq() + facet_wrap(~time_frame) # linear enough
+
+##################################### welchs 2 sample TWO-SIDED t-test ########################### 
+
+#### 1,500-2,000 north ####
+elev2n_test <- t.test(fia_elev2n$sum_total_basal, vtm_elev2n$sum_total_basal, paired = F)
+
+elev2n_test_summary <- broom::tidy(elev2n_test)
+
+elev2n_effsize <- effsize::cohen.d(fia_elev2n$sum_total_basal, vtm_elev2n$sum_total_basal)
+elev2n_effsize_df <- as.data.frame(elev2n_effsize$estimate)
+
+#### 1,500- 2,000 south ####
+elev2s_test <- t.test(fia_elev2s$sum_total_basal, vtm_elev2s$sum_total_basal, paired = F)
+
+elev2s_test_summary <- broom::tidy(elev2s_test)
+
+elev2s_effsize <- effsize::cohen.d(fia_elev2s$sum_total_basal, vtm_elev2s$sum_total_basal)
+elev2s_effsize_df <- as.data.frame(elev2s_effsize$estimate)
+
+#### 2,000-2,500 north ####
+elev3n_test <- t.test(fia_elev3n$sum_total_basal, vtm_elev3n$sum_total_basal, paired = F)
+
+elev3n_test_summary <- broom::tidy(elev3n_test)
+
+elev3n_effsize <- effsize::cohen.d(fia_elev3n$sum_total_basal, vtm_elev3n$sum_total_basal)
+elev3n_effsize_df <- as.data.frame(elev3n_effsize$estimate)
+
+#### 2,000-2,500 south ####
+elev3s_test <- t.test(fia_elev3s$sum_total_basal, vtm_elev3s$sum_total_basal, paired = F)
+
+elev3s_test_summary <- broom::tidy(elev3s_test)
+
+elev3s_effsize <- effsize::cohen.d(fia_elev3s$sum_total_basal, vtm_elev3s$sum_total_basal)
+elev3s_effsize_df <- as.data.frame(elev3s_effsize$estimate)
+
+```
+
+# Summary All Stats tests
+
+need to fix this code once i figure out with bruce the best way test for the species graphs. 
+```{r}
+
+################################## list of name of unique stats tests ###############################
+names1 <- c('All plots',"Species - Yellow Pine", "Family - Conifers","Family - Oaks", "SIFT","STFI", "ANF", "LPNF", "SBNF", "Elevation - 1000-1500", "Elevation - 1500-2000", "Elevation - 2000-2500", "Elevation - 2500+", "Elevation - 1500-2000 North", "Elevation - 1500-2000 South",  "Elevation - 2000-2500 North", "Elevation - 2000-2500 South")
+
+names2 <- c('Species - ABCO', "Species - CADE", "Species - PICO", "Species - PILA", "Species - QUCH", "Species - QUKE")
+################################### Combine t-test results ################################## 
+basal_t_test_stats_summary <- rbind(total_test_summary, species_yp_test_summary, lifeform_test_conifers_summary, lifeform_test_oaks_summary, shade2_sift_test_summary, shade2_stfi_test_summary, anf_test_summary, lpnf_test_summary, sbnf_test_summary, elev1_test_summary, elev2_test_summary, elev3_test_summary, elev4_test_summary, elev2n_test_summary, elev3s_test_summary,elev3n_test_summary, elev3s_test_summary)
+
+t_test_stats_summary_tidy <- basal_t_test_stats_summary %>% 
+  rename(mean_diff = estimate,
+         fia_mean = estimate1,
+         vtm_mean = estimate2, 
+         t_statistic = statistic,
+         df = parameter) %>% 
+  mutate(stats = names1) %>% 
+  mutate(significant_difference = case_when(
+    p.value <= 0.05 ~ "Yes",
+    p.value > 0.05 ~ "No"
+  )) 
+
+basal_boot_stats_summary <- rbind(species_abco_boot_summary, species_cade_boot_summary, species_pico_boot_summary, species_pila_boot_summary, species_quch_boot_summary, species_quke_boot_summary)
+
+boot_test_stats_summary_tidy <- basal_boot_stats_summary %>% 
+  rename(fia_mean = estimate1,
+         vtm_mean = estimate2, 
+         t_statistic = statistic,
+         df = parameter) %>% 
+  mutate(mean_diff = fia_mean - vtm_mean) %>% 
+  mutate(stats = names2) %>% 
+  mutate(significant_difference = case_when(
+    p.value <= 0.05 ~ "Yes",
+    p.value > 0.05 ~ "No"
+  )) 
+
+ 
+t_test_summary_all <- rbind(t_test_stats_summary_tidy, boot_test_stats_summary_tidy)
+
+  
+################################### combine cohen's D results ################################## 
+effectsize_bind <- cbind(total_effsize_df, species_yp_effsize_df, lifeform_conifers_effsize_df, lifeform_oaks_effsize_df, sift_effsize_df, stfi_effsize_df, anf_effsize_df, lpnf_effsize_df, sbnf_effsize_df, elev1_effsize_df, elev2_effsize_df, elev3_effsize_df, elev4_effsize_df, elev2n_effsize_df, elev2s_effsize_df,elev3n_effsize_df, elev3s_effsize_df)
+
+effectsize_bind_tidy <- effectsize_bind %>% 
+  pivot_longer(1:17,
+               names_to = 'temp_stats',
+               values_to = 'effect_size_cohens_d') %>% 
+  mutate(stats = names1) %>% 
+  dplyr::select(-temp_stats)
+
+################################### combine summarys stats ################################## 
+basal_stats_summary_join <- full_join(t_test_summary_all, effectsize_bind_tidy, by = "stats")
+
+basal_stats_summary_all <- basal_stats_summary_join %>% 
+  mutate(effect_size_qual = case_when(
+    effect_size_cohens_d <= 0.2 ~ "Negligible",
+    effect_size_cohens_d <= 0.5 ~ "Small",
+    effect_size_cohens_d <= 0.8 ~ "Medium",
+    effect_size_cohens_d > 0.8 ~ "Large"
+  )) %>% 
+  dplyr::select(stats, significant_difference, p.value, effect_size_cohens_d, effect_size_qual, fia_mean, vtm_mean, mean_diff, df, t_statistic, alternative, conf.low, conf.high) 
+
+write.csv(basal_stats_summary_all, 'basal_stats_summary_all_final_final.csv')
+################################## Kable of Stats ############################
+
+basal_stats_summary_all %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = "striped", 
+                full_width = F,
+                position = "left") 
+
+
+```
+
+
+

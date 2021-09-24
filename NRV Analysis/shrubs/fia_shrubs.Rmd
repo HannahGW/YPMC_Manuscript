@@ -1,0 +1,816 @@
+---
+title: "fia_shrubs"
+author: "Hannah Garcia-Wickstrum"
+date: "1/6/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# install packages
+library(tidyverse)
+library(janitor)
+library(here)
+library(dplyr)
+library(kableExtra)
+```
+
+### Read in FIA Data 
+```{r}
+fia_data <- read_csv(here::here("FIA Data", "Final FIA data and code used for analysis", "final_binded_fia_ypmc_data.csv"))
+
+fia_data$admin_forest[fia_data$admin_forest == "LPF"] <-"LPNF"
+fia_data$admin_forest[fia_data$admin_forest == "BDF"] <-"SBNF"
+fia_data$admin_forest[fia_data$admin_forest == "Not NF or other NF"] <- "Other"
+
+fia_data <- fia_data %>% 
+filter(dbh >= 10.2) # not sure if this is needed  or not just wanted to see if it would change anything. 
+
+# count plots in ANF
+fia_anf <- fia_data %>% 
+  filter(admin_forest == "ANF") %>% 
+  group_by(unique_plot) %>% 
+  count() # 26 plots 
+
+fia_lpnf <- fia_data %>% 
+  filter(admin_forest == "LPNF") %>% 
+  group_by(unique_plot) %>% 
+  count() # 62 plots
+
+fia_sbnf <- fia_data %>% 
+  filter(admin_forest == "SBNF") %>% 
+  group_by(unique_plot) %>% 
+  count() # 107 plots 
+
+fia_cnf <- fia_data %>% 
+  filter(admin_forest == "CNF") %>% 
+  group_by(unique_plot) %>% 
+  count() # 4 plots
+
+fia_other <- fia_data %>% 
+  filter(admin_forest == "Other") %>% 
+  group_by(unique_plot) %>% 
+  count() # 11 plots
+
+# FIA data (SBNF, LPNF, CNF, ANF, and other) add up to 210! Yay!
+
+```
+
+
+### Read in Shrubs datasheets for all 4 national forests
+```{r}
+# CORRECT shrubs datasheets
+
+anf_shrubs <- read.table(here::here("./FIA Data/USFS_intensified_and_FIA_data/shrub_data/ANF_FSVEG_VXPT_V.txt"), sep = ",", skip = 0, header = T)
+sbnf_shrubs <- read.table(here::here("./FIA Data/USFS_intensified_and_FIA_data/shrub_data/BDF_FSVEG_VXPT_V.txt"), sep = ",", skip = 0, header = T)
+cnf_shrubs <- read.table(here::here("./FIA Data/USFS_intensified_and_FIA_data/shrub_data/CNF_FSVEG_VXPT_V.txt"), sep = ",", skip = 0, header = T)
+lpnf_shrubs <- read.table(here::here("./FIA Data/USFS_intensified_and_FIA_data/shrub_data/LPF_FSVEG_VXPT_V.txt"), sep = ",", skip = 0, header = T)
+
+## --------------------------------------------------------------------------------------------------
+# Some metadata (link here: https://www.fs.fed.us/r5/rsl/projects/inventory/fsveg-tree.shtml) - **use this link: https://www.fs.fed.us/r5/rsl/projects/inventory/fsveg-veg.shtml
+
+# SS = Woody Subshrub/Half-shrub
+# SH = Woody Shrub
+# gis_link = The code is composed of Project Name, Forest number and Plot number. An example would be INFPLUS0408002, where INFPLUS04 is the Project Name, 08 is the forest number and 002 is the plot number. Each GIS link is a unique number.
+
+# covr = Percent of the area occupied by the plant or ground surface cover.
+```
+
+### Check shrubs datasheet to see if there are records for all 210 plots (well, 199 excluding "other") for all lifeforms (not just shrubs)
+```{r}
+# make unique plot id (jen and amp's method) and add column for national forest
+anf_check <- anf_shrubs %>% 
+  clean_names() %>% 
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  ) %>% 
+  mutate(admin_forest = "ANF")
+
+sbnf_check <- sbnf_shrubs %>% 
+  clean_names() %>% 
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  ) %>% 
+  mutate(admin_forest = "SBNF")
+
+lpnf_check <- lpnf_shrubs %>% 
+  clean_names() %>% 
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  ) %>% 
+  mutate(admin_forest = "LPNF")
+
+cnf_check <- cnf_shrubs %>% 
+  clean_names() %>% 
+  unite(
+    col = r5_pltnum, # Create new unique plot number column to match column from shapefile
+    c(forest, plot), # Combine forest and plot together to match FIA shapefile formatting
+    sep = "", # no separator
+    remove = FALSE # Keep old columns
+  ) %>% 
+  mutate(admin_forest = "CNF")
+
+## --------------------------------------------------------------------------------------------------
+# combine the dataframes of all 4 national forests
+all_nf_shrubs <- do.call("rbind", list(anf_check, sbnf_check, lpnf_check, cnf_check)) %>% 
+  rename(unique_plot = r5_pltnum)
+
+all_nf_shrubs <- all_nf_shrubs %>% 
+  select(unique_plot, aspc, slop, elev, lfrm, spec, covr, heig, admin_forest)
+
+## --------------------------------------------------------------------------------------------------
+# prepare fia data frame and count plots
+fia_select <- fia_data %>%
+  select(unique_plot, admin_forest)
+
+fia_select_count <- fia_select %>% 
+  group_by(unique_plot) %>% 
+  tally() #210 checks out
+
+# count how many plots are in the fia shrub data (this includes all lifeforms)
+all_count <- all_nf_shrubs %>% 
+  group_by(unique_plot, admin_forest) %>% 
+  tally() %>% 
+  distinct(.keep_all = T)
+# 139 plots in ANF
+# 234 plots in SBNF
+# 91 plots in CNF 
+# 558 plots in LPNF
+## --------------------------------------------------------------------------------------------------
+# merge shrubs with fia
+merge_test <- merge(fia_data, all_nf_shrubs, by="unique_plot") %>% 
+  distinct(.keep_all = T)
+
+all_nf_shrubs_join <- merge(fia_select, all_nf_shrubs, by="unique_plot") %>% 
+   distinct(.keep_all = T)
+
+all_nf_shrubs_join_count <- all_nf_shrubs_join %>% 
+  group_by(unique_plot) %>% 
+  tally() #132 total plots (this does not include "other")
+
+# filter for onldistinct()
+all_nf_shrubs_join_select <- all_nf_shrubs_join %>% 
+  filter(lfrm %in% c("SS", "SH")) %>% 
+   distinct(.keep_all = T)
+  
+
+## --------------------------------------------------------------------------------------------------
+# count number of plots with shrubs 
+all_nf_shrubs_join_select_count <- all_nf_shrubs_join_select %>% 
+  group_by(unique_plot) %>% 
+  tally() #124 - so out of 210 FIA plots, we have 124 plots with shrubs (cannot confirm whether or not they are true zeros..)
+
+# count how many plots in each national forest
+anf_all_count <- all_nf_shrubs_join_select %>% 
+  filter(admin_forest.y == "ANF") %>% 
+  group_by(unique_plot) %>% 
+  tally() #12 plots
+
+sbnf_all_count <- all_nf_shrubs_join_select %>% 
+  filter(admin_forest.y == "SBNF") %>% 
+  group_by(unique_plot) %>% 
+  tally() #69 plots
+
+lpnf_all_count <- all_nf_shrubs_join_select %>% 
+  filter(admin_forest.y == "LPNF") %>% 
+  group_by(unique_plot) %>% 
+  tally() #41 plots
+
+cnf_all_count <- all_nf_shrubs_join_select %>% 
+  filter(admin_forest.y == "CNF") %>% 
+  group_by(unique_plot) %>% 
+  tally() #2 plots
+
+## --------------------------------------------------------------------------------------------------
+# final dataframe to use for the analysis
+final_shrubs_fia <- all_nf_shrubs_join_select 
+final_shrubs_fia <- final_shrubs_fia[-c(10)]
+final_shrubs_fia <- final_shrubs_fia %>% 
+  rename(admin_forest = admin_forest.x) %>% 
+  rename(aspect = aspc) %>% 
+  rename(slope = slop) %>% 
+  rename(species = spec) %>% 
+  rename(per_cover = covr) %>% 
+  rename(height = heig)
+
+# counting how many plots there are at each elevation band
+final_shrubs_fia_counts <-final_shrubs_fia %>%
+  mutate(elevation_m = (elev/3.28084)) %>% #convert from ft. to m
+  mutate(elevation_class = case_when (elevation_m <= 499 ~ "<499",
+                                    elevation_m > 500 & elevation_m <999.99 ~ "500–999", 
+                                    elevation_m > 1000 & elevation_m <1499.99 ~ "1000–1499",
+                                    elevation_m > 1500 & elevation_m <1999.99 ~ "1500–1999",
+                                    elevation_m > 2000 & elevation_m <2499.99 ~ "2000–2499",
+                                    elevation_m >= "2500" ~ ">2500",
+                                    TRUE ~ "none")) %>% 
+  group_by(elevation_class) %>% 
+  count(unique_plot) # checks out because there are 124 plots total
+  
+# final fia shrubs dataframe = final_shrubs_fia
+```
+
+### Analysis
+#### Average shrub cover per National Forest (for plots that had shrubs recorded in them)
+
+```{r}
+# find the mean shrub cover of all national forests combined
+all_nf_shrubs_cover <- final_shrubs_fia %>% 
+  group_by(unique_plot) %>% 
+  tally(per_cover) 
+
+mean(all_nf_shrubs_cover[["n"]]) # 52.39516 %
+
+## --------------------------------------------------------------------------------------------------
+# ANF - 12 plots with shrubs (26 plots in fia data)
+anf_shrubs <- final_shrubs_fia %>% 
+  filter(admin_forest == "ANF") %>% 
+  group_by(unique_plot) %>% 
+  tally(per_cover)
+
+mean(anf_shrubs[["n"]]) # 40.58333 %
+
+# SBNF - 69 plots with shrubs (107 plots in fia data)
+sbnf_shrubs <- final_shrubs_fia %>% 
+   filter(admin_forest == "SBNF") %>% 
+  group_by(unique_plot) %>% 
+  tally(per_cover)
+
+mean(sbnf_shrubs[["n"]]) # 56.05797 %
+
+# LPNF - 41 plots with shrubs (62 plots in fia data)
+lpnf_shrubs <- final_shrubs_fia %>% 
+   filter(admin_forest == "LPNF") %>% 
+  group_by(unique_plot) %>% 
+  tally(per_cover)
+
+mean(lpnf_shrubs[["n"]]) # 50.82927 % 
+
+# CNF
+cnf_shrubs_mean <- final_shrubs_fia %>% 
+  filter(admin_forest == "CNF") %>% 
+  group_by(unique_plot) %>% 
+  tally(per_cover)
+
+mean(cnf_shrubs_mean[["n"]]) # 29%
+
+## --------------------------------------------------------------------------------------------------
+# Find shrub cover across the landscape (so plots where no shrub cover was calculated)
+# All shrub plots = 62.857% of plots
+# ANF shrub plots = 46.1538% of plots 
+# LPNF shrub plots = 66.12903% of plots
+# SBNF shrub plots = 64.4859% of pots
+# CNF shrub plots = 29%
+
+```
+### Find top shrubs
+```{r}
+# Top 10 shrubs in all NFs
+top_shrubs <- final_shrubs_fia %>% 
+  mutate(scientific_name = case_when(species == "CECO" ~ "Ceanothus cordulatus",
+                                 species == "CELE3" ~ "Cercocarpus ledifolius",
+                                 species == "ARTR2" ~ "Artemisia tridentata",
+                                 species == "CEIN3" ~ "Ceanothus integerrimus",
+                                 species == "ARPA6" ~ "Arctostaphylos patula",
+                                 species == "CHRYS9" ~ "Chrysothamnus sp",
+                                 species == "2SHRUB" ~ "unk. shrub",
+                                 species == "SYMO" ~ "Symphoricarpos mollis",
+                                 species == "SYRO" ~ "Symphoricarpos rotundifolius",
+                                 species == "AMCA5" ~ "Amorpha californica",
+                                 species == "CEMOG" ~ "Cercocarpus montanus var. glaber",
+                                 species == "ERFA2" ~ "Eriogonum fasciculatum",
+                                 species == "CECU" ~ "Ceanothus cuneatus",
+                                 species == "ARGL3" ~ "Arctostaphylos glandulosa",
+                                 species == "CELE2" ~ "Ceanothus leucodermis",
+                                 species == "ERCA6" ~ "Eriodictyon californicum",
+                                 species == "CHSE11" ~ "Chrysolepis sempervirens",
+                                 species == "ERICA2" ~ "Ericameria sp",
+                                 species == "AMCAC" ~ "Amorpha californica var. californica",
+                                 species == "RIBES" ~ "Ribes sp",
+                                 species == "GAVE2" ~ "Garrya veatchii",
+                                 species == "ERICA" ~ "	Erica sp",
+                                 species == "RICE" ~ "Ribes cereum",
+                                 species == "HODI" ~ "Holodiscus discolor",
+                                 species == "ERIOG" ~ "Eriogonum sp",
+                                 species == "RHOC" ~ "Rhododendron occidentale",
+                                 species == "ARVI4" ~ "Arctostaphylos viscida",
+                                 species == "AMPA2" ~ "Amelanchier pallida",
+                                 species == "FRCAC5" ~ "Frangula californica ssp. californica",
+                                 species == "ARGL4" ~ "Arctostaphylos glauca",
+                                 species == "ARTRV" ~ "Artemisia tridentata ssp. vaseyana",
+                                 species == "CEGR" ~ "Ceanothus greggii",
+                                 species == "CEGRP" ~ "Ceanothus greggii var. perplexans",
+                                 species == "CEPA" ~ "Ceanothus palmeri",
+                                 species == "ERCO25" ~ "Eriophyllum confertiflorum",
+                                 species == "ERNA10" ~ "Ericameria nauseosa",
+                                 species == "FRCA6" ~ "Fremontodendron californicum",
+                                 species == "GALIU" ~ "Galium sp",
+                                 species == "PENST" ~ "Penstemon sp",
+                                 species == "ADSP" ~ "Adenostoma sparsifolium",
+                                 species == "ERAR27" ~ "Ericameria arborescens",
+                                 species == "QUWIF" ~ "Quercus wislizeni var. frutescens",
+                                 species == "QUBE5" ~ "Quercus berberidifolia",
+                                 species == "QUJO3" ~ "Quercus john-tuckeri",
+                                 species == "SALIX" ~ "Salix sp", 
+                                 species == "MALAC2" ~ "Malacothamnus sp",
+                                 species == "RUUR" ~ "Rubus ursinus",
+                                 species == "PRUNU" ~ "Prunus sp",
+                                 species == "RIAU" ~ "Ribes aureum",
+                                 species == "QUCH2" ~ "Quercus chrysolepis",
+                                 species == "SAMBU" ~ "Sambucus sp",
+                                 species == "RINE" ~ "Ribes nevadense",
+                                 species == "SARAM4" ~ "Sambucus racemosa var. melanocarpa",
+                                 species == "RHAMN" ~ "Rhamnus sp",
+                                 species == "CEPA" ~ "Ceanothus palmeri",
+                                 species == "CEMOG" ~ "Cercocarpus montanus var. glaber",
+                                 TRUE ~ "none") )  
+top_shrubs <- top_shrubs %>% 
+  mutate(common_name = case_when(scientific_name == "Ceanothus cordulatus" ~ "whitethorn ceanothus",
+                                 scientific_name == "Arctostaphylos patula" ~ "greenleaf manzanita",
+                                 scientific_name == "Artemisia tridentata" ~ "big sagebrush",
+                                 scientific_name == "Chrysolepis sempervirens" ~ "bush chinquapin",
+                                 scientific_name == "Ceanothus integerrimus" ~ "deerbrush",
+                                 scientific_name == "Quercus john-tuckeri" ~ "Tucker's oak",
+                                 scientific_name == "Ceanothus cuneatus" ~ "buckbrush",
+                                 scientific_name == "Arctostaphylos glandulosa" ~ "Eastwood's manzanita",
+                                 scientific_name == "Symphoricarpos mollis" ~ "creeping snowberry",
+                                 scientific_name == "Cercocarpus ledifolius" ~ "curl-leaf mountain mahogany",
+                                 scientific_name == "Arctostaphylos patula" ~ "greenleaf manzanita",
+                                 scientific_name == "Ericameria sp" ~ "goldenbush",
+                                 scientific_name == "Cercocarpus montanus var. glaber " ~ "birchleaf mountain mahogany",
+                                 scientific_name == "Eriogonum fasciculatum" ~ "Eastern Mojave buckwheat",
+                                 scientific_name == "Eriodictyon californicum" ~ "California yerba santa",
+                                 scientific_name == "Ceanothus leucodermis" ~ "chaparral whitethorn",
+                                 scientific_name == "Artemisia tridentata ssp. vaseyana" ~ "mountain big sagebrush",
+                                 scientific_name == "Quercus berberidifolia" ~ "scrub oak",
+                                 scientific_name == "Quercus wislizeni var. frutescens" ~ "interior live oak",
+                                 scientific_name == "Eriogonum sp" ~ "buckwheat",
+                                 scientific_name == "Arctostaphylos patula" ~ "greenleaf manzanita",
+                                 scientific_name == "Symphoricarpos rotundifolius" ~ "roundleaf snowberry",
+                                 scientific_name == "Fremontodendron californicum" ~ "California flannelbush",
+                                 scientific_name == "Ceanothus palmeri" ~ "Palmer ceanothus",
+                                 scientific_name == "Cercocarpus montanus var. glaber" ~ "birchleaf mountain mahogany",
+                                 TRUE ~ "none")) 
+
+
+class(top_shrubs$per_cover) # numeric
+
+#top shrubs count
+top_shrubs_count <- top_shrubs %>% 
+  group_by(species) %>% 
+  count(unique_plot) %>% 
+  group_by(unique_plot) %>% 
+  count(species)
+## --------------------------------------------------------------------------------------------------
+# Top 10 overall shrubs in all national forests
+top_10 <- top_shrubs %>% 
+  group_by(scientific_name, common_name, species) %>%
+  summarise(total_cover = sum(per_cover)) %>% # now divide by total number of plots
+  relocate(common_name) %>% 
+  mutate(average_land_cover = total_cover/124)
+
+top_species_plot <- top_shrubs %>%
+  select(scientific_name, unique_plot) %>%
+  group_by(scientific_name) %>%
+  count(unique_plot)
+
+count <- top_species_plot %>%
+  filter(scientific_name == "Symphoricarpos mollis")
+
+is.numeric(top_10$total_cover)
+sorted <- top_10[order(-top_10$total_cover),] 
+
+
+final_top_10 <- sorted %>% 
+  head(10)  
+
+final_top_10 <- final_top_10[ -c(3) ]
+final_top_10 <- final_top_10[-c(3)]
+
+final_top_10 %>%
+    kable(col.names = c("Common Name",
+                      "Scientific Name",
+                      "Landscape Percent Cover")) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>%
+  row_spec(4, background = "#CCD5E1") %>%
+  row_spec(6, background = "#CCD5E1") %>%
+  row_spec(8, background = "#CCD5E1") %>%
+  row_spec(10, background = "#CCD5E1") %>%
+  row_spec(1, background = "#EAF1FB") %>%
+  row_spec(3, background = "#EAF1FB") %>%
+  row_spec(5, background = "#EAF1FB") %>%
+  row_spec(7, background = "#EAF1FB") %>%
+  row_spec(9, background = "#EAF1FB")
+  # save_kable(here("NRV Analysis", "shrubs", "Tables","FINAL_FIA_top_ten_species.png")) # this is done
+final_top_10
+
+## --------------------------------------------------------------------------------------------------
+# BY NATIONAL FOREST
+
+# Top 3 shrubs in ANF
+anf_top_3 <- top_shrubs %>% 
+  filter(admin_forest == "ANF") %>% 
+  group_by(species, scientific_name, common_name, admin_forest) %>% 
+  summarise(total_cover = sum(per_cover)) %>% 
+  mutate(average_land_cover = total_cover/12)
+
+
+# Here's where I tried to count the number of plots per species but it wasn't working.
+  anf_count <- top_shrubs %>%
+  filter(admin_forest == "ANF") %>%
+  select(unique_plot, species) %>%
+  filter(!species == "2SHRUB") %>% 
+  group_by(species) %>%
+  count(unique_plot)
+
+## --------------------------------------------------------------------------------------------------
+
+# sort and find saample size for top 3
+anf_sorted <- anf_top_3[order(-anf_top_3$total_cover),]
+  
+# Chrysolepis sempervirens = 2 plots
+# Cercocarpus ledifolius = 2 plots
+# Arctostaphylos glandulosa = 1 plot
+  
+anf_final_3 <- anf_sorted %>% 
+  head(3) %>% 
+  relocate(common_name)
+
+anf_final_3 <- anf_final_3[ -c(2,4) ]
+anf_final_3 <- anf_final_3[ -c(3)] 
+anf_final_3 <- anf_final_3 %>% 
+  mutate(sample_size = case_when(scientific_name == "Chrysolepis sempervirens" ~ "2",
+                                 scientific_name == "Cercocarpus ledifolius" ~ "2",
+                                 scientific_name == "Arctostaphylos glandulosa" ~ "1"))
+
+anf_final_3 <- anf_final_3[, c(1, 2, 4, 3)]
+
+anf_final_3 %>%
+    kable(col.names = c("Common Name",
+                      "Scientific Name",
+                      "Sample Size",
+                      "Average Landscape Cover")) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>%
+  row_spec(1, background = "#EAF1FB") %>%
+  row_spec(3, background = "#EAF1FB")
+  # save_kable(here("NRV Analysis", "shrubs", "Tables","ANF_top3_species.png"))
+## --------------------------------------------------------------------------------------------------
+
+# Top 3 shrubs in LPNF
+lpnf_top_3 <- top_shrubs %>% 
+  filter(admin_forest == "LPNF") %>% 
+  group_by(scientific_name, common_name) %>% 
+  summarise(total_cover = sum(per_cover)) %>% 
+  relocate(common_name) %>% 
+  mutate(average_land_cover = total_cover/41)
+
+lpnf_count <- top_shrubs %>%
+  filter(admin_forest == "LPNF") %>%
+  select(unique_plot, species) %>%
+  filter(!species == "2SHRUB") %>% 
+  group_by(species) %>%
+  count(unique_plot)
+  
+lpnf_sorted <- lpnf_top_3[order(-lpnf_top_3$total_cover),]
+
+# Artemisia tridentata = 8 plots
+# Ceanothus cordulatus = 6 plots
+# Quercus john-tuckeri = 11 plots
+
+lpnf_final_3 <- lpnf_sorted %>% 
+  head(3)
+lpnf_final_3 <- lpnf_final_3[-c(3)] %>% 
+  mutate(sample_size = case_when(scientific_name == "Artemisia tridentata" ~ "8",
+                                 scientific_name == "Ceanothus cordulatus" ~ "6",
+                                 scientific_name == "Quercus john-tuckeri" ~ "11"))
+lpnf_final_3 <- lpnf_final_3[, c(1, 2, 4, 3)]
+
+lpnf_final_3 %>%
+    kable(col.names = c("Common Name",
+                      "Scientific Name",
+                      "Sample Size",
+                      "Landscape Percent Cover")) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = F,
+                position = "left") %>%
+  row_spec(2, background = "#CCD5E1") %>%
+  row_spec(1, background = "#EAF1FB") %>%
+  row_spec(3, background = "#EAF1FB")
+  # save_kable(here("NRV Analysis", "shrubs", "Tables","LPNF_top3_species.png"))
+
+## -----------------------------------------------------------------------------------------------
+# Top 3 shrubs in SBNF
+sbnf_top_3 <- top_shrubs %>% 
+  filter(admin_forest == "SBNF") %>% 
+  group_by(scientific_name, common_name) %>% 
+  summarise(total_cover = sum(per_cover)) %>% 
+  relocate(common_name) %>% 
+  mutate(average_land_cover = total_cover/69)
+
+sbnf_count <- top_shrubs %>%
+  filter(admin_forest == "SBNF") %>%
+  select(unique_plot, species) %>%
+  filter(!species == "2SHRUB") %>% 
+  group_by(species) %>%
+  count(unique_plot)
+
+sbnf_sorted <- sbnf_top_3[order(-sbnf_top_3$total_cover),]
+
+# Cercocarpus ledifolius = 18
+# Ceanothus cordulatus = 19
+# Arctostaphylos patula = 18
+
+sbnf_final_3 <- sbnf_sorted %>% 
+  head(3)
+sbnf_final_3 <- sbnf_final_3[-c(3)] %>% 
+    mutate(sample_size = case_when(scientific_name == "Cercocarpus ledifolius" ~ "18",
+                                 scientific_name == "Ceanothus cordulatus" ~ "19",
+                                 scientific_name == "Arctostaphylos patula" ~ "18"))
+
+
+sbnf_final_3 %>%
+    kable(col.names = c("Common Name",
+                      "Scientific Name",
+                      "Sample Size",
+                      "Average Landscape Cover")) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>%
+  row_spec(1, background = "#EAF1FB") %>%
+  row_spec(3, background = "#EAF1FB") 
+
+  # save_kable(here("NRV Analysis", "shrubs", "Tables","SBNF_top3_species.png"))
+
+## -----------------------------------------------------------------------------------------------
+# CNF top 3
+cnf_top_3 <- top_shrubs %>% 
+  filter(admin_forest == "CNF") %>% 
+  group_by(scientific_name, common_name) %>% 
+  summarise(total_cover = sum(per_cover)) %>% 
+  relocate(common_name) %>% 
+  mutate(average_land_cover = total_cover/2)
+
+cnf_count <- top_shrubs %>%
+  filter(admin_forest == "CNF") %>%
+  select(unique_plot, species) %>%
+  filter(!species == "2SHRUB") %>% 
+  group_by(species) %>%
+  count(unique_plot)
+
+cnf_sorted <- cnf_top_3[order(-cnf_top_3$total_cover),]
+
+# Eriogonum fasciculatum = 2
+# Ceanothus palmeri = 1
+# Cercocarpus montanus var. glaber = 1
+
+cnf_final_3 <- cnf_sorted %>% 
+  head(3) %>% 
+  mutate(sample_size = case_when(scientific_name == "Eriogonum fasciculatum" ~ "2",
+                                 scientific_name == "Ceanothus palmeri" ~ "1",
+                                 scientific_name == "Cercocarpus montanus var. glaber" ~ "1"))
+cnf_final_3 <- cnf_final_3[-c(3)]
+
+cnf_final_3 <- cnf_final_3[, c(1, 2, 4, 3)]
+cnf_final_3 %>%
+    kable(col.names = c("Common Name",
+                      "Scientific Name",
+                      "Sample Size",
+                      "Average Landscape Cover")) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>%
+  row_spec(1, background = "#EAF1FB") %>%
+  row_spec(3, background = "#EAF1FB")
+  # save_kable(here("NRV Analysis", "shrubs", "Tables","CNF_top3_species.png"))
+
+# CNF only has two plots so consider leavingout
+
+## --------------------------------------------------------------------------------------------------
+# combine all the NFs into one kable
+
+anf_bind <- anf_final_3 %>% 
+  mutate(national_forest = "ANF") %>% 
+  relocate(national_forest)
+
+cnf_bind <- cnf_final_3 %>% 
+  mutate(national_forest = "CNF") %>% 
+  relocate(national_forest)
+
+lpnf_bind <- lpnf_final_3 %>% 
+  mutate(national_forest = "LPNF") %>% 
+  relocate(national_forest)
+
+sbnf_bind <- sbnf_final_3 %>% 
+  mutate(national_forest = "SBNF") %>% 
+  relocate(national_forest)
+
+
+all_nf_top3 <- do.call("rbind", list(anf_bind, cnf_bind, lpnf_bind, sbnf_bind)) %>% 
+  kable(col.names = c("National Forest",
+                      "Common Name",
+                      "Scientific Name",
+                      "Sample Size",
+                      "Landscape Percent Cover")) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#EAF1FB") %>%
+  row_spec(4, background = "#CCD5E1") %>%
+  row_spec(6, background = "#CCD5E1") %>%
+  row_spec(8, background = "#EAF1FB") %>%
+  row_spec(10, background = "#CCD5E1") %>%
+  row_spec(12, background = "#CCD5E1") %>%
+  row_spec(1, background = "#EAF1FB") %>%
+  row_spec(3, background = "#EAF1FB") %>%
+  row_spec(5, background = "#CCD5E1") %>%
+  row_spec(7, background = "#EAF1FB") %>%
+  row_spec(9, background = "#EAF1FB") %>% 
+  row_spec(11, background = "#CCD5E1")
+  # save_kable(here("NRV Analysis", "shrubs", "Tables","Top3_NF_noCNF.png"))
+
+all_nf_top3
+
+``` 
+
+### Find top 10 genuses of ALL National Forests
+```{r}
+top_genus <- top_shrubs %>% 
+  select(species, common_name, scientific_name, per_cover) %>% 
+  separate(scientific_name, into = c("genus", "sp"), sep = " ") %>% 
+  group_by(genus) %>%
+  summarise(genus_total = sum(per_cover)) %>% 
+  rename(total_percent_cover = genus_total) %>% 
+  mutate(average_land_cover = total_percent_cover/124)
+
+# Counting the plots --------
+# top_shrubs_plot <- elevation_genus %>% 
+#   select(genus, unique_plot) %>% 
+#   group_by(genus) %>% 
+#   count(unique_plot)
+
+# count <- top_shrubs_plot %>% 
+#   filter(genus == "Fremontodendron")
+
+genus_sorted <- top_genus[order(-top_genus$total_percent_cover),] 
+genus_sorted <- genus_sorted[-c(8),]
+
+top_10_genus_final <- genus_sorted %>% 
+  head(10)
+
+top_10_genus_final %>%
+    kable(col.names = c("Genus",
+                      "Total Cover",
+                      "Average Landscape Cover")) %>%
+  kable_styling(bootstrap_options = "bordered",
+                full_width = F,
+                position = "left") %>% 
+  row_spec(2, background = "#CCD5E1") %>%
+  row_spec(4, background = "#CCD5E1") %>%
+  row_spec(6, background = "#CCD5E1") %>%
+  row_spec(8, background = "#CCD5E1") %>%
+  row_spec(10, background = "#CCD5E1") %>%
+  row_spec(1, background = "#EAF1FB") %>%
+  row_spec(3, background = "#EAF1FB") %>%
+  row_spec(5, background = "#EAF1FB") %>%
+  row_spec(7, background = "#EAF1FB") %>%
+  row_spec(9, background = "#EAF1FB") %>% 
+  # save_kable(here("NRV Analysis", "shrubs", "Tables","Top10_genus.png"))
+
+```
+
+# A look at genus by elevation
+```{r}
+# use top_shrubs dataframe
+elevation_genus <-top_shrubs %>%
+  mutate(elevation_m = (elev/3.28084)) %>% #convert from ft. to m
+  mutate(elevation_class = case_when (elevation_m <= 499 ~ "<499",
+                                    elevation_m > 500 & elevation_m <999.99 ~ "500–999", 
+                                    elevation_m > 1000 & elevation_m <1499.99 ~ "1000–1499",
+                                    elevation_m > 1500 & elevation_m <1999.99 ~ "1500–1999",
+                                    elevation_m > 2000 & elevation_m <2499.99 ~ "2000–2499",
+                                    elevation_m >= "2500" ~ ">2500",
+                                    TRUE ~ "none")) %>% 
+    separate(scientific_name, into = c("genus", "sp"), sep = " ")
+  
+elevation_genus_class_count <- elevation_genus %>%
+  group_by(genus, elevation_class) %>%
+  tally()
+
+# testing - stuck here. I can't filter by elevation class? for 2500 I could? Idk why. I need Leana's help :(
+elevation_genus_test <- elevation_genus %>% 
+  select(unique_plot, genus, elevation_class) %>% 
+  group_by(elevation_class, genus) %>% 
+  count(unique_plot)
+
+# elevation > 2500 # 13 plots 
+elevation_2500_x <- elevation_genus %>% 
+  filter(elevation_class == ">2500")
+  # select(unique_plot, genus, per_cover) %>% 
+  # group_by(genus) %>% 
+  # count(unique_plot)
+
+    # group_by(genus) %>% 
+  # tally(per_cover) %>% 
+  # mutate(avg_cover = n/13)
+
+# elevation 1500-1999 # 51 plots
+elevation_1500_1999_x <- elevation_genus %>%
+  filter(elevation_class == "1500–1999") %>%
+  select(genus, per_cover, unique_plot) %>%
+  group_by(genus) %>% 
+  count(unique_plot)
+  # mutate(avg_cover = n/51)
+
+# elevation 2000-2499 # 48 plots
+elevation_2000_2499x <- elevation_genus %>%
+  filter(elevation_class == "2000–2499") %>%
+  select(genus, per_cover, unique_plot) %>% 
+  group_by(genus) %>% 
+  count(unique_plot)
+  
+  # group_by(genus) %>%
+  # tally(per_cover) %>% 
+  # mutate(avg_cover = n/48)
+
+# elevation 1000-1499  # 12 plots
+elevation_1000_1499x <- elevation_genus %>%
+  filter(elevation_class == "1000–1499") %>% 
+  select(genus, per_cover, unique_plot) %>% 
+  group_by(genus) %>% 
+  count(unique_plot)
+  # mutate(avg_cover = n/12)
+
+```
+
+# A look at species by elevation
+```{r}
+# create column for elevation classes
+elevation_species <-top_shrubs %>%
+  mutate(elevation_m = (elev/3.28084)) %>% #convert from ft. to m
+  mutate(elevation_class = case_when (elevation_m <= 499 ~ "<499",
+                                    elevation_m > 500 & elevation_m <999.99 ~ "500–999", 
+                                    elevation_m > 1000 & elevation_m <1499.99 ~ "1000–1499",
+                                    elevation_m > 1500 & elevation_m <1999.99 ~ "1500–1999",
+                                    elevation_m > 2000 & elevation_m <2499.99 ~ "2000–2499",
+                                    elevation_m >= "2500" ~ ">2500",
+                                    TRUE ~ "none")) 
+
+# elevation 1000-1499 - 12 plots
+elevation_1000_1499xspecies <- elevation_species %>%
+  filter(elevation_class == "1000–1499") %>% 
+  select(scientific_name, per_cover, unique_plot) %>% 
+  group_by(scientific_name) %>%
+  count(unique_plot)
+  # tally(per_cover) %>% 
+  # mutate(avg_cover = n/12)
+
+# elevation 1500-1999 - 51 plots
+elevation_1500_1999xspecies <- elevation_species %>%
+  filter(elevation_class == "1500–1999") %>%
+  select(scientific_name, per_cover, unique_plot) %>%
+  group_by(scientific_name) %>% 
+  count(unique_plot)
+  
+  # tally(per_cover) %>% 
+  # mutate(avg_cover = n/51)
+
+# elevation 2000-2499 # 48 plots
+elevation_2000_2499xspecies <- elevation_species %>%
+  filter(elevation_class == "2000–2499") %>%
+  select(scientific_name, per_cover, unique_plot) %>% 
+  group_by(scientific_name) %>% 
+  count(unique_plot)
+  # tally(per_cover) %>% 
+  # mutate(avg_cover = n/48)
+
+# elevation > 2500 # 13 plots 
+elevation_2500_xspecies <- elevation_species %>% 
+  filter(elevation_class == ">2500") %>% 
+  select(unique_plot, scientific_name, per_cover) %>%
+  group_by(scientific_name) %>%
+  count(unique_plot)
+  # tally(per_cover) %>% 
+  # mutate(avg_cover = n/13)
+    
+```
+
+

@@ -1,0 +1,616 @@
+---
+title: "FIA Data Review"
+author: "Jennifer Truong"
+date: "6/29/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+# Attach packages ----
+
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(kableExtra)
+library(lubridate)
+
+```
+
+```{r}
+# Read in data ----
+
+# Cleveland NF
+cnf_fia <- read_csv(here::here ("R", "fia_data_observation", "plot_data", "CNF_FSVEG_VXPT_V.csv")) %>% 
+  clean_names() %>%  # Clean names
+  rename("species" = "spec") %>% # Rename species column
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+)
+
+# Angeles NF
+anf_fia <- read_csv(here::here ("R", "fia_data_observation", "plot_data", "ANF_FSVEG_VXPT_V.csv")) %>% 
+  clean_names() %>% 
+  rename("species" = "spec") %>% 
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  )
+
+# Los Padres NF
+lpf_fia <- read_csv(here::here ("R", "fia_data_observation", "plot_data","LPF_FSVEG_VXPT_V.csv")) %>% 
+  clean_names() %>% 
+  rename("species" = "spec") %>% 
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  )
+
+# San Bernardino NF
+bdf_fia <- read_csv(here::here ("R", "fia_data_observation", "plot_data","BDF_FSVEG_VXPT_V.csv")) %>% 
+  clean_names() %>% 
+  rename("species" = "spec") %>% 
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  )
+# FIA Metadata notes ----
+
+# Link: https://www.fs.fed.us/r5/rsl/projects/inventory/fsveg-veg.shtml
+
+# According to FIA metadata, the following conditions apply to conifer species
+# - Special Features (SPFE) and Surface Cover (SRFC) are not applicable so they'll be NA anyways
+# - Number of Stems (NCNT) is optional
+
+# SRFC refers to non-vegetative cover (ie. rocks, water/snow/ice, moss/lichen/fungi, etc).
+# NCNT is just number of cover stems...still have no idea what that means.
+
+# Note: Every time there is an NA value in "spec," there is a value in "srfc" and vice versa. Tree/plant =/= surface cover?
+
+# Additional notes ----
+
+# To clean ddate column as actual dates, split column into two and have last four digits as year by using separate()
+# Troubleshooting help: https://tidyr.tidyverse.org/reference/separate.html
+
+```
+
+## Observing Unique Species
+
+Conifer species we are focusing on for our GP:
+
+| Scientific Name               | Common Name          | Code       |
+| ----------------------------- | -------------------- | ---------- |
+| Pinus ponderosa               | Ponderosa pine       | PIPO       |
+| Pinus jeffreyi                | Jeffery pine         | PIJE       |
+| Pinus coulteri                | Coulter pine         | PICO3      |
+| Pinus lambertiana             | Sugar pine           | PILA       |
+| Pseudotsuga macrocarpa        | Big cone douglas fir | PSMA       |
+| Abies concolor                | White fir            | ABCO       |
+| Calocedrus decurrens          | Incense cedar        | CADE       |
+| Pinus contorta ssp. murrayana | Lodgepole pine       | PICO/PICOM | 
+
+
+## ANF Data Analysis
+
+### ANF Data Collection Dates
+
+```{r Draw timeline of data connection}
+
+# anf_date <- as_date(anf_fia$ddate); was unable to parse column as dates
+
+# Try to draw a timeline (?)
+ggplot(data = anf_fia, aes(x = ddate_year)) +
+  geom_density()
+```
+
+### ANF Conifer Count
+
+```{r ANF Species}
+
+# Get total number of observations for ANF ----
+
+anf_total <- nrow(anf_fia)
+
+# Find all tree species recorded in "species" column ----
+
+anf_all_species <- unique(anf_fia$species)
+# Troubleshooting tip for unique(): https://www.datanovia.com/en/lessons/identify-and-remove-duplicate-data-in-r/
+
+anf_all_species_row <- NROW(anf_all_species)
+# Troubleshooting tip for counting number of rows: https://stats.stackexchange.com/questions/5253/how-do-i-get-the-number-of-rows-of-a-data-frame-in-r
+
+# Count number of species within ANF ----
+
+anf_count <- anf_fia %>% 
+  group_by(species) %>%   # Group by species
+  count()       # Count observations per species
+
+# Filter to conifer species
+anf_count_conifer <- anf_count %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27"))
+# Troubleshooting tip for using %in% for a groups of values: https://www.datanovia.com/en/lessons/subset-data-frame-rows-in-r/
+
+# Get sum for conifer observations
+anf_sum_conifer <- sum(anf_count_conifer$n)
+# Troubleshooting tip for summing values of one variable: https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/sum
+
+# Make table for conifer count ----
+anf_count_conifer %>%
+  kable() %>% 
+  kable_styling()
+
+```
+
+### ANF Trees per Plot
+
+```{r Grouping Data Points by Plot}
+
+# First, group the data by plot number and count?
+
+anf_plot <- anf_fia %>% 
+  group_by(plot) %>% 
+  count()
+
+# Then count number of rows to get number of plots
+
+anf_plot_count <- NROW(anf_plot)
+```
+
+```{r}
+# Then, do it again by grouping by plot number and filtering to species
+
+anf_plot_conifer <- anf_fia %>% 
+  group_by(plot) %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27")) %>% 
+  count()
+
+anf_plot_conifer %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "100px", height = "300px")
+# Troubleshooting tip for kableExtra functions: https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html#html_only_features
+
+# Doing it this way excludes plots that have other tree species or no trees recorded at all.
+
+```
+
+### ANF Missing Data
+
+```{r Counting NA Values}
+# Observing NA values for ANF ----
+
+# Total Count of NA values - 80259
+anf_na <- n_miss(anf_fia)
+
+# Total Count of complete values - 194861
+anf_complete <- n_complete(anf_fia)
+
+# Percentage of NA values - 29.17%
+anf_na_pct <- pct_miss(anf_fia)
+
+# Summary of NA values
+anf_na_summ <- miss_var_summary(anf_fia)
+
+# Turn summary table into kableExtra table
+anf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "300px", height = "300px")
+
+# Note #1: NCNT has 0 NA values here...does that mean those 0's represent 0's or are some of them NA values?
+# Note #2: This summary would be more or less the same for the other forests.
+
+# Summary of NA values by observations (rows)
+anf_na_summ_row <-  miss_case_table(anf_fia)
+```
+
+```{r ANF Other Tree Data}
+# Find difference between total observations and conifer trees (excluding NA values in species column)
+
+anf_other_trees <- (anf_total - anf_na_summ$n_miss[14]) - anf_sum_conifer
+
+```
+
+### ANF FIA Data Summary 
+
+- The total number of data points recorded in the FIA data for ANF is `r anf_total`. There are `r anf_na_summ$n_miss[11]` data points recorded as actual plant trees.
+- There are `r anf_plot_count` plots in ANF.
+- A total of `r anf_all_species_row` unique plant species are recorded in this FIA dataset. Only 8 of these are our conifer species of interest. 
+- `r anf_sum_conifer` trees are recorded as conifer trees. 
+- `r anf_other_trees` are recorded as other plant species.
+- There are `r anf_na_summ$n_miss[14]` missing values in the species column.
+
+## CNF Data Analysis
+
+### CNF Data Collection Dates
+
+```{r}
+
+ggplot(data = cnf_fia, aes(x = ddate_year)) +
+  geom_density()
+```
+
+### CNF Conifer Count
+```{r CNF Species}
+
+# Get total number of observations for CNF ----
+
+cnf_total <- nrow(cnf_fia)
+
+# Find all tree species recorded in "species" column ----
+
+cnf_all_species <- unique(cnf_fia$species)
+# Troubleshooting tip for unique(): https://www.datanovia.com/en/lessons/identify-and-remove-duplicate-data-in-r/
+
+cnf_all_species_row <- NROW(cnf_all_species)
+# Troubleshooting tip for counting number of rows: https://stats.stackexchange.com/questions/5253/how-do-i-get-the-number-of-rows-of-a-data-frame-in-r
+
+# Count number of species within CNF ----
+
+cnf_count <- cnf_fia %>% 
+  group_by(species) %>%   # Group by species
+  count()       # Count observations per species
+
+# Filter to conifer species
+cnf_count_conifer <- cnf_count %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27"))
+# Troubleshooting tip for using %in% for a groups of values: https://www.datanovia.com/en/lessons/subset-data-frame-rows-in-r/
+
+# Get sum for conifer observations
+cnf_sum_conifer <- sum(cnf_count_conifer$n)
+# Troubleshooting tip for summing values of one variable: https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/sum
+
+# Make table for conifer count ----
+cnf_count_conifer %>%
+  kable() %>% 
+  kable_styling()
+
+```
+
+### CNF Trees per Plot
+
+```{r}
+
+# First, group the data by plot number and count?
+
+cnf_plot <- cnf_fia %>% 
+  group_by(plot) %>% 
+  count()
+
+# Then count number of rows
+
+cnf_plot_count <- NROW(cnf_plot)
+```
+
+```{r}
+# Then, do it again by grouping by plot number and filtering to species
+
+cnf_plot_conifer <- cnf_fia %>% 
+  group_by(plot) %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27")) %>% 
+  count()
+
+cnf_plot_conifer %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "100px", height = "300px")
+# Troubleshooting tip for kableExtra functions: https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html#html_only_features
+
+# Doing it this way excludes plots that have other tree species or no trees recorded at all.
+
+```
+
+### CNF Missing Data
+
+```{r}
+# Observing NA values for CNF ----
+
+# Total Count of NA values - 55371
+cnf_na <- n_miss(cnf_fia)
+
+# Total Count of complete values - 131989
+cnf_complete <- n_complete(cnf_fia)
+
+# Percentage of NA values - 29.55%
+cnf_na_pct <- pct_miss(cnf_fia)
+
+# Summary of NA values
+cnf_na_summ <- miss_var_summary(cnf_fia)
+
+cnf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "300px", height = "300px")
+
+# Summary of NA values by observations (rows)
+cnf_na_summ_row <-  miss_case_table(cnf_fia)
+```
+
+```{r CNF Other Tree Data}
+# Find difference between total observations and conifer trees (excluding NA values in species column)
+
+cnf_other_trees <- (cnf_total - cnf_na_summ$n_miss[14]) - cnf_sum_conifer
+
+```
+
+### CNF FIA Data Summary 
+
+- The total number of data points recorded in the FIA data for CNF is `r cnf_total`. There are `r cnf_na_summ$n_miss[11]` data points recorded as actual plant trees.
+- There are `r cnf_plot_count` plots in CNF.
+- A total of `r cnf_all_species_row` unique plant species are recorded in this FIA dataset. Only 8 of these are our conifer species of interest. 
+- `r cnf_sum_conifer` trees are recorded as conifer trees. 
+- `r cnf_other_trees` are recorded as other plant species.
+- There are `r cnf_na_summ$n_miss[14]` missing values in the species column.
+
+## LPF Data Analysis
+
+### LPF Data Collection Dates
+
+```{r}
+
+ggplot(data = lpf_fia, aes(x = ddate_year)) +
+  geom_density()
+```
+
+### LPF Conifer Count
+
+```{r}
+
+# Get total number of observations for LPF ----
+
+lpf_total <- nrow(lpf_fia)
+
+# Find all tree species recorded in "species" column ----
+
+lpf_all_species <- unique(lpf_fia$species)
+# Troubleshooting tip for unique(): https://www.datanovia.com/en/lessons/identify-and-remove-duplicate-data-in-r/
+
+lpf_all_species_row <- NROW(lpf_all_species)
+# Troubleshooting tip for counting number of rows: https://stats.stackexchange.com/questions/5253/how-do-i-get-the-number-of-rows-of-a-data-frame-in-r
+
+# Count number of species within LPF ----
+
+lpf_count <- lpf_fia %>% 
+  group_by(species) %>%   # Group by species
+  count()       # Count observations per species
+
+# Filter to conifer species
+lpf_count_conifer <- lpf_count %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27"))
+
+# Get sum for conifer observations
+lpf_sum_conifer <- sum(lpf_count_conifer$n)
+
+# Make table for conifer count
+lpf_count_conifer %>%
+  kable() %>% 
+  kable_styling()
+```
+
+### LPF Trees per Plot
+
+```{r}
+
+# First, group the data by plot number and count?
+
+lpf_plot <- lpf_fia %>% 
+  group_by(plot) %>% 
+  count()
+
+# Then count number of rows
+
+lpf_plot_count <- NROW(lpf_plot)
+```
+
+```{r}
+# Then, do it again by grouping by plot number and filtering to species
+
+lpf_plot_conifer <- lpf_fia %>% 
+  group_by(plot) %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27")) %>% 
+  count()
+
+lpf_plot_conifer %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "100px", height = "300px")
+# Troubleshooting tip for kableExtra functions: https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html#html_only_features
+
+# Doing it this way excludes plots that have other tree species or no trees recorded at all.
+
+```
+
+### LPF Missing Data
+
+```{r}
+# Observing NA values for LPF ----
+
+# Total Count of NA values - 246437
+lpf_na <- n_miss(lpf_fia)
+
+# Total Count of complete values - 565323
+lpf_complete <- n_complete(lpf_fia)
+
+# Percentage of NA values - 30.36%
+lpf_na_pct <- pct_miss(lpf_fia)
+
+# Summary of NA values
+lpf_na_summ <- miss_var_summary(lpf_fia)
+
+lpf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "300px", height = "300px")
+
+# Summary of NA values by observations (rows)
+lpf_na_summ_row <-  miss_case_table(lpf_fia)
+```
+
+```{r LPF Other Tree Data}
+# Find difference between total observations and conifer trees (excluding NA values in species column)
+
+lpf_other_trees <- (lpf_total - lpf_na_summ$n_miss[13]) - lpf_sum_conifer
+
+```
+
+### LPF FIA Data Summary
+
+- The total number of data points recorded in the FIA data for LPF is `r lpf_total`. There are `r lpf_na_summ$n_miss[14]` data points recorded as actual plant trees.
+- There are `r lpf_plot_count` plots in LPF.
+- A total of `r lpf_all_species_row` unique plant species are recorded in this FIA dataset. Only 8 of these are our conifer species of interest. 
+- `r lpf_sum_conifer` trees are recorded as conifer trees. 
+- `r lpf_other_trees` are recorded as other plant species.
+- There are `r lpf_na_summ$n_miss[13]` missing values in the species column.
+
+## BDF Data Analysis
+
+```{r}
+
+ggplot(data = bdf_fia, aes(x = ddate_year)) +
+  geom_density()
+```
+
+### BDF Conifer Count
+
+```{r}
+
+# Get total number of observations for BDF ----
+
+bdf_total <- nrow(bdf_fia)
+
+# Find all tree species recorded in "species" column ----
+
+bdf_all_species <- unique(bdf_fia$species)
+# Troubleshooting tip for unique(): https://www.datanovia.com/en/lessons/identify-and-remove-duplicate-data-in-r/
+
+bdf_all_species_row <- NROW(bdf_all_species)
+# Troubleshooting tip for counting number of rows: https://stats.stackexchange.com/questions/5253/how-do-i-get-the-number-of-rows-of-a-data-frame-in-r
+
+# Count number of species within BDF ----
+
+bdf_count <- bdf_fia %>% 
+  group_by(species) %>%   # Group by species
+  count()       # Count observations per species
+
+# Filter to conifer species
+bdf_count_conifer <- bdf_count %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27"))
+
+# Get sum for conifer observations
+bdf_sum_conifer <- sum(bdf_count_conifer$n)
+
+# Make table for conifer count
+bdf_count_conifer %>%
+  kable() %>% 
+  kable_styling()
+```
+
+### BDF Trees per Plot
+
+```{r}
+
+# First, group the data by plot number and count?
+
+bdf_plot <- bdf_fia %>% 
+  group_by(plot) %>% 
+  count()
+
+# Then count number of rows
+
+bdf_plot_count <- NROW(bdf_plot)
+```
+
+```{r}
+
+# Then, do it again by grouping by plot number and filtering to species
+
+bdf_plot_conifer <- bdf_fia %>% 
+  group_by(plot) %>% 
+  filter(species %in% c("PIPO", "PIJE", "PICO", "PICOM", "PICO3", "PILA", "PSMA", "ABCO", "CADE27")) %>% 
+  count()
+
+bdf_plot_conifer %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "100px", height = "300px")
+
+# Doing it this way excludes plots that have other tree species or no trees recorded at all.
+
+```
+
+### BDF Missing Data
+
+```{r}
+# Observing NA values for BDF ----
+
+# Total Count of NA values - 145939
+bdf_na <- n_miss(bdf_fia)
+
+# Total Count of complete values - 345021
+bdf_complete <- n_complete(bdf_fia)
+
+# Percentage of NA values - 29.72%
+bdf_na_pct <- pct_miss(bdf_fia)
+
+# Summary of NA values
+bdf_na_summ <- miss_var_summary(bdf_fia)
+
+bdf_na_summ %>% 
+  kable(digits = 2) %>% 
+  kable_styling(bootstrap_options = c("striped", "condensed")) %>% 
+  scroll_box(width = "300px", height = "300px")
+
+# Summary of NA values by observations (rows)
+bdf_na_summ_row <-  miss_case_table(bdf_fia)
+
+```
+
+```{r BDF Other Tree Data}
+# Find difference between total observations and conifer trees (excluding NA values in species column)
+
+bdf_other_trees <- (bdf_total - bdf_na_summ$n_miss[14]) - bdf_sum_conifer
+
+```
+
+### BDF FIA Data Summary
+
+- The total number of data points recorded in the FIA data for BDF is `r bdf_total`. There are `r bdf_na_summ$n_miss[12]` data points recorded as actual plant trees.
+- There are `r bdf_plot_count` plots in BDF.
+- A total of `r bdf_all_species_row` unique plant species are recorded in this FIA dataset. Only 8 of these are our conifer species of interest. 
+- `r bdf_sum_conifer` trees are recorded as conifer trees. 
+- `r bdf_other_trees` are recorded as other plant species.
+- There are `r bdf_na_summ$n_miss[14]` missing values in the species column.
+
+## Summary of NA Statistics
+
+```{r Summary of NA statistics}
+# Combining NA stats together in one df ----
+
+# Create vectors
+nf_name <- c("ANF", "CNF", "LPF", "BDF")
+nf_na <- c(anf_na, cnf_na, lpf_na, bdf_na)
+nf_complete <- c(anf_complete, cnf_complete, lpf_complete, bdf_complete)
+nf_na_pct <- c(anf_na_pct, cnf_na_pct, lpf_na_pct, bdf_na_pct)
+
+# Combine vectors into data frame
+na_df <- tibble(nf_name, nf_na, nf_complete, nf_na_pct)
+
+# Turn data frame into kable table for a neater look
+na_df %>% 
+  kable(digits = 2) %>% # Keep deimal points to two places
+  kable_styling(bootstrap_options = c("striped", "condensed"))
+
+```
+

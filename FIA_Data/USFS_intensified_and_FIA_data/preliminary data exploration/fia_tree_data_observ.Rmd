@@ -1,0 +1,450 @@
+---
+title: "USFS FIA Tree Data Review"
+author: "Jennifer Truong"
+date: "9/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+
+# Attach packages ----
+
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(kableExtra)
+library(lubridate)
+library(here)
+
+```
+
+```{r}
+# Read in data ----
+
+# Read in CSVs from all four national forests
+
+anf_fia <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/ANF_FSVEG_TXPT_V.csv") %>% 
+  clean_names() # Change to lower case
+
+cnf_fia <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/CNF_FSVEG_TXPT_V.csv") %>% 
+  clean_names() # Change to lower case
+
+lpf_fia <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/LPF_FSVEG_TXPT_V.csv") %>% 
+  clean_names() %>% # Change to lower case
+  mutate(
+    plot = as.character(plot) # Change plot column from double to character because it's numeric for some reason
+  )
+
+bdf_fia <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/BDF_FSVEG_TXPT_V.csv") %>% 
+  clean_names() %>% # Change to lower case
+  mutate(
+    forest = as.character(forest) # Change forest column from double to character because it's numeric for some reason
+  )
+
+# Combine all CSVs together
+all_nfs_fia <- bind_rows(anf_fia, cnf_fia, lpf_fia, bdf_fia) %>% 
+  rename("species" = "spec") %>% # Rename species column
+  separate(
+    col = ddate,
+    into = c("ddate_month", "ddate_year"), # Create two new columns
+    sep = -4, # Split 4 digits from the right
+    convert = TRUE
+  ) %>% 
+  mutate(
+    ddate_year = as.character(ddate_year) # Change year column to character 
+  ) %>% 
+  mutate(
+    species = case_when(
+      species %in% "CADE27" ~ "CADE", # Change FSVEG code for Calocedrus decurrens to CADE
+      species %in% c("PICO", "PICOM") ~ "PICOM", # Change FSVEG codes for Pinus contorta to PICOM <- important to do this first before the next line
+      species %in% "PICO3" ~ "PICO", # Change FSVEG code for Pinus coulteri to PICO
+      species %in% c("QUCH2", "QUCHC") ~ "QUCH", # Change FSVEG code for Quercus chrysolepis to QUCH
+      TRUE ~ as.character(species) # Keep all other species the same
+      )
+  )
+
+
+# FIA Metadata notes ----
+
+# Only limited to National Forest data, no FIA plots outside of NF boundaries included in this dataset
+
+# Additional notes ----
+
+# To clean ddate column as actual dates, split column into two and have last four digits as year by using separate()
+# Troubleshooting help: https://tidyr.tidyverse.org/reference/separate.html
+
+
+```
+
+```{r Quick analysis of CADE in LPF}
+
+lpf_cade <- lpf_fia %>% 
+  filter(spec == "CADE27") %>% #Filter to CADE
+  group_by(plot) %>% 
+  count()
+```
+
+# Preliminary Data Analysis
+
+### Observing Unique Species
+
+YPMC Conifer species we are focusing on for our GP:
+
+| Scientific Name               | Common Name          | Code       |
+| ----------------------------- | -------------------- | ---------- |
+| Pinus ponderosa               | Ponderosa pine       | PIPO       |
+| Pinus jeffreyi                | Jeffery pine         | PIJE       |
+| Pinus lambertiana             | Sugar pine           | PILA       |
+| Abies concolor                | White fir            | ABCO       |
+| Calocedrus decurrens          | Incense cedar        | CADE       |
+
+Affiliate species that we may look at:
+
+| Scientific Name               | Common Name          | Code       |
+| ----------------------------- | -------------------- | ---------- |
+| Pinus coulteri                | Coulter pine         | PICO3      |
+| Pseudotsuga macrocarpa        | Big cone douglas fir | PSMA       |
+| Quercus kelloggii             | California black oak | QUKE       |
+| Quercus chrysolepis           | Canyon live oak      | QUCH       |
+
+Conifer species we are not considering for our analysis:
+
+| Scientific Name               | Common Name          | Code       |
+| ----------------------------- | -------------------- | ---------- |
+| Pinus contorta ssp. murrayana | Lodgepole pine       | PICOM      | 
+
+### Setup for Filtering Plots by Species
+
+```{r Species Filtering Setup}
+
+# Set up vector for YPMC species
+alpine = c("PIPO", "PIJE", "PILA", "ABCO", "CADE")
+
+# Set up vector for "PSMA", "PICO3", "QUKE", "QUCH", and "PICOM"
+subalpine = c("PSMA", "PICO", "QUKE", "QUCH", "PICOM")
+
+
+```
+
+### Tree Size Classes
+
+Diameter base height in cm; classes determined from Figure 19 (pg 106 hard-copy and 116 digital) in Safford and Stevens 2017
+
+Use variable DBHI and convert from inches to cm
+
+- 5 - 20 cm 
+- 20 - 40 cm
+- 40 - 60 cm
+- 60 - 80 cm
+- 80 - 100 cm
+- 100 - 120 cm
+- 120 - 140 cm
+- /> 140 cm
+
+# FIA Data Analysis by NF
+
+### Data Collection Dates
+
+```{r Draw timeline of data connection}
+
+# Create new df for graph
+all_nfs_fia_timeline_df <- all_nfs_fia %>% 
+  group_by(forest, ddate_year) %>% # Group by forest and year
+  count() # Count # of rows
+
+# Try to draw a timeline (?)
+ggplot(data = all_nfs_fia_timeline_df, 
+       aes(x = ddate_year,
+           y = n)) +
+  geom_line(aes(color = forest, # Color by forest
+                group = forest) # Group observations by forest
+            ) + # Change line thickness to 1
+  scale_color_manual(name = "National Forest",
+                     labels = c("Angeles", "Cleveland", "Los Padres", "San Bernardino"), # Rename legend items to forest names
+                     values = c("coral", "darkgoldenrod2", "darkgreen", "deepskyblue2")) + # Specify colors
+  labs(x = "Year",
+       y = "Number of Observations",
+       title = "FIA Observations per Year") + # Change axis labels and title
+  theme_light() +
+  theme(
+    plot.title = element_text(hjust = 0.5) # Center plot title
+  )
+
+# Note: FIA record dates vary from 2001 - 2011 for all Nfs
+```
+
+Los Padres seems to have the most observations overall. The highest amount of observations occurred in 2011 with 6000 observations total. This wsas followed by San Bernardino with about 4000 observations in 2010.
+
+### Number of FIA Observations
+
+```{r Count of Observations}
+
+# Get total number of observations for all forests
+all_nfs_fia_total <- nrow(all_nfs_fia)
+
+# Get number of observations by forest
+fia_total_per_forest <- all_nfs_fia %>% 
+  group_by(forest) %>% # Group by forest
+  count() %>% # Count number of rows
+  mutate(
+    forest = case_when(
+      forest == "01" ~ "Angeles",
+      forest == "02" ~ "Cleveland",
+      forest == "03" ~ "Los Padres",
+      forest == "04" ~ "San Bernardino"
+    )
+  ) # Change values in forest column to forest names
+
+# Create table
+fia_total_per_forest %>%
+  kable() %>% 
+  kable_styling(full_width = F)
+
+```
+
+### YPMC Conifer Count
+
+```{r Count observations per species}
+
+# Find all tree species recorded in "species" column ----
+fia_all_species <- unique(all_nfs_fia$species)
+# Troubleshooting tip for unique(): https://www.datanovia.com/en/lessons/identify-and-remove-duplicate-data-in-r/
+
+# Count number of observations by species per forest
+fia_species_per_forest <- all_nfs_fia %>% 
+  group_by(forest, species) %>%   # Group by forest and species
+  count() # Count observations per species
+
+# Filter to species of interest
+fia_species_count <- fia_species_per_forest %>% 
+  filter(species %in% c(alpine, subalpine))
+# Troubleshooting tip for using %in% for a groups of values: https://www.datanovia.com/en/lessons/subset-data-frame-rows-in-r/
+
+# Get sum for conifer observations
+fia_species_sum <- sum(fia_species_count$n)
+# Troubleshooting tip for summing values of one variable: https://www.rdocumentation.org/packages/base/versions/3.6.2/topics/sum
+
+# Make table for conifer count ----
+fia_species_count %>%
+  kable() %>% 
+  kable_styling(full_width = F)
+
+```
+
+### Number of Trees per Plot
+
+```{r Grouping Data Points by Plot}
+
+# First, group the data by plot number and count
+fia_plot_count <- all_nfs_fia %>% 
+  group_by(forest, plot) %>% 
+  count()
+
+# Then count number of rows to get number of plots
+fia_plot_count_total <- NROW(fia_plot_count)
+```
+
+There are `r fia_plot_count_total` plots in all four Southern California national forests.
+
+```{r Counting by plot}
+
+# Now count total number of trees per plot (before any filtering)
+fia_tree_per_plot <- all_nfs_fia %>% 
+  group_by(gis_link) %>% # Group by gis_link. May seem to be more accurate than grouping forest and plot separately
+  count()
+
+# Count total number of trees (alpine and subalpine only) per plot
+fia_conifer_per_plot <- all_nfs_fia %>% 
+  group_by(gis_link) %>% # Group by gis_link (GROUP BY SPECIES IN THE NEXT LINE)
+  #separate( 
+    #col = gis_link,
+    #into = c("gislink_prefix", "r5plotnum"), # Create two new columns
+    #sep = -5, # Split 5 digits to recreate the r5plotnum column from the FIA shapefile
+    #convert = FALSE
+  #) %>% 
+  filter(species %in% c(alpine, subalpine)) %>% 
+  count()
+
+# Then, do it again by grouping by plot number and by species
+fia_plot_species <- all_nfs_fia %>% 
+  group_by(gis_link, species) %>% # Group by forest, plot, species
+  filter(species %in% c(alpine, subalpine)) %>% 
+  count()
+
+# Join the two tables together ----
+# Should total # per plot include ALL species or just species of interest? <- ask AMP and Leana
+fia_plot_species_join <- inner_join(fia_plot_species, fia_conifer_per_plot, by = "gis_link") %>% 
+  rename(
+    "species_n" = "n.x",
+    "total_n" = "n.y"
+  ) %>% 
+  mutate(
+    pct = round(species_n/total_n*100, 2)
+  )
+
+# Summarize tree per species (for all, not just YPMC) for each plot ----
+fia_plot_species_join %>% 
+  kable() %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) # %>% 
+  # scroll_box(width = "100px", height = "300px")
+# Troubleshooting tip for kableExtra functions: https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html#html_only_features
+
+```
+
+```{r Just for observation only}
+# Filter to LPF CADE for observation purposes
+
+fia_plot_species_join_cade <- fia_plot_species_join %>% 
+  filter(gis_link %in% c("LPFPLUS11_107251", "LPFPLUS11_107303", "LPFPLUS11_107402", "LPFPLUS11_107433", "LPFPLUS11_107721", "LPFPLUS11_107722", "LPFPLUS11_107732", "LPFPLUS11_107749"))
+
+fia_plot_species_join_cade %>% 
+  kable() %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F)
+
+# Filter to YPMC plots (for observation purposes, won't appear in final PDF) ----
+
+# Filter to plots with YPMC conifers
+fia_plot_conifer_count <- fia_plot_species %>% 
+  filter(species %in% alpine) %>%  # Filter to just rows with YPMC species
+  group_by(gis_link) %>%  # Group by forest and plot
+  mutate(
+    conifer_total = sum(n) # Sum observations of conifers per plot
+  )
+
+# Filter joined table to just alpine
+fia_plot_join_conifer <- fia_plot_species_join %>% 
+  filter(species %in% alpine)
+
+```
+
+#### Notes about Plots
+
+##### Angeles
+
+1. Plot 01020 has 1 CADE and 1 QUCH according to the table. Matches what's in the final DF too <- Should I remove it?
+2. Plot 01024 has 15 QUCH according to the table. However, in the final DF, more rows are present and they seem to be all YPMC species. I wonder what happened. **Edit:** Grouping by "gis_link" seems to get rid of the disrepancy. Plot 01024 has been removed from the final DF. 
+
+### Tree Size Class for all NFs
+
+```{r Categorizing by Tree Size Class}
+
+fia_size_class <- all_nfs_fia %>% 
+  filter(species %in% alpine) %>%  # Filter by conifer species
+  mutate(
+    dbh_cm = dbhi*2.54 # Convert inches to cm
+  )
+
+#Create new vector for size classes
+
+fia_size_class$size_class <- cut(fia_size_class$dbh_cm,
+                                 c(0,5,20,40,60,80,100,120,140,200),
+                                 labels = c("0-5", "5-20", "20-40", "40-60", "60-80", "80-100", "100-120", "120-140", ">140"))
+
+# Count per size class
+
+fia_size_class_count <- fia_size_class %>% 
+  group_by(forest, size_class) %>% 
+  count(size_class) 
+
+fia_size_class_count %>%    
+  kable(col.names = c("Forest", "Size Class (cm)", "Count")) %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) # %>% 
+  #scroll_box(width = "300px", height = "300px")
+
+# Count per size class and conifer species
+
+fia_size_class_conifer_count <- fia_size_class %>% 
+  group_by(forest, size_class, species) %>% 
+  count(size_class)
+
+fia_size_class_conifer_count %>% 
+  kable(col.names = c("Forest", "Size Class (cm)", "Species", "Count")) %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) #%>% 
+  #scroll_box(width = "300px", height = "300px")
+
+# Troubleshooting Tip - creating catagories based on ranges: https://stackoverflow.com/questions/21050021/create-category-based-on-range-in-r
+```
+ 
+
+
+### Finalizing of FIA Data with YPMC Data
+
+```{r Write Final CSV for ANF}
+# Remove plots from main FIA dataset
+all_nfs_fia_ypmc <- all_nfs_fia %>% 
+  filter(species %in% c(alpine, subalpine)) %>% # Filter down to alpine and subalpine species
+  mutate(
+    temp = case_when(
+      species %in% c("PSMA", "PICO", "QUKE", "QUCH", "PICOM") ~ "0", 
+      TRUE ~ "1") 
+  ) %>% 
+    mutate(temp = as.numeric(temp)) %>% 
+    group_by(gis_link) %>% # Group by gis_link
+    mutate(all_plot_species2 = sum(temp)) %>% # Sum percentage of species consumption
+    filter(all_plot_species2 != 0) %>%  # Keep  plots that do not equal 0
+    select(-temp, -all_plot_species2) # Keep all columns except the temporary columns that were created now
+
+# Write CSV
+write_csv(all_nfs_fia_ypmc, "G:/Github/gotforestry/R/fia_final_data/all_nfs_fia_ypmc.csv")
+
+```
+
+#### Plots in final DF:
+
+```{r Pull final plots from final CSV}
+
+all_nfs_fia_ypmc_plots <- all_nfs_fia_ypmc %>% 
+  select(forest, plot, gis_link) %>%  # Select forest, plot, and gis_link to verify
+  group_by(forest, plot) %>% 
+  count()
+
+# Create vector for plots included
+all_nfs_fia_plot_vector <- all_nfs_fia_ypmc$gis_link
+
+# Create table for plots included
+all_nfs_fia_ypmc_plots %>%    
+  kable() %>% 
+  kable_styling(latex_options = "striped",
+                full_width = F) # %>% 
+  #scroll_box(width = "300px", height = "300px")
+
+
+```
+
+
+#### Plots removed from final DF: 
+
+```{r Pull removed plots that are not included in final CSV}
+
+# Code not working so far, not sure how much this is important, although it helps with verification
+
+#all_nfs_fia_removed_plots <- all_nfs_fia %>% 
+  #filter(species %in% c(alpine, subalpine)) %>% # Filter to alpine and subalpine species
+  #select(forest, plot, gis_link) %>%  # Select forest, plot, and gis_link to verify
+  #filter(gis_link %in% all_nfs_fia_plot_vector) %>% # Remove plots that match YPMC gis_link values
+  #group_by(forest, plot) %>% 
+  #count()
+
+# Create table for plots NOT included
+
+#all_nfs_fia_removed_plots %>%    
+  #kable() %>% 
+  #kable_styling(latex_options = "striped",
+                #full_width = F) # %>% 
+  #scroll_box(width = "300px", height = "300px")
+
+
+```
+Notes: the notes below are for when I manually looked through the data frames. I didn't finish because it took forever.
+
+- **Angeles:** 01010, 01013, 01014, 01017, 01019, 01024, 01030, 01040, 01043, 01044, 01076, 01077, 01081, 01101, 01104, 01110, 01115, 01116, 01118
+- Cleveland:
+- Los Padres:
+- San Bernardino:

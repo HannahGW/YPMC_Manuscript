@@ -1,0 +1,62 @@
+---
+title: "Code for Final Report"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+############################ smallest d.b.h. basal area ###############################
+
+# basal area for binned FIA dbh using the midpoint, JUST for the 3 smallest size classes
+fia_basal_smallest <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+   mutate(dbh_class = case_when(             # assign dbh bin midpoints in INCHES
+    dbh < 10.2 ~ 0,       
+    dbh <= 30.4 ~ 7.5,  
+    dbh <= 60.9 ~ 17.5, 
+    dbh < 91.44 ~ 29.5, 
+    dbh >= 91.44 ~ 91.44
+  )) %>% 
+  filter(dbh_class != "0",
+         dbh_class != "91.44") %>% 
+  mutate(dbh_in2 = dbh_class^2,              # square the dbh for each individual tree 
+         basal_ft2 = 0.005454*dbh_in2,       # convert in2 to ft2 using the foresters constant
+         basal_m2 = basal_ft2/10.764,        # convert ft2 to m2
+         basal_ha = basal_m2/0.067245) %>%   # divide tree basal area by te size of the plot in ha to get m2/ha
+  group_by(join_plot) %>% 
+  summarize(sum_basal = sum(basal_ha)) %>% 
+  mutate(data = "binned")
+
+############################ largest d.b.h. basal area by species ##########################
+
+fia_basal_largest <- fia_tidy %>% 
+  filter(!is.na(dbh)) %>% 
+  filter(dbh >= 91.44) %>%
+  mutate(dbh_largest = case_when(
+    species == "ABCO" ~ 131,          # Max - 10%
+    species == "CADE" ~ 145,          # Max - 10%
+    species == "PICO" ~ 104,          #
+    species == "PILA" ~ 123,          # Mean + 1 SD
+    species == "PSMA" ~ 126,          # Max - 10%
+    species == "Yellow Pine" ~ 117,   # Mean + 1 SD
+    species == "QUCH" ~ 98,           #
+    species == "QUKE" ~ 93            #
+  )) %>% 
+  mutate(dbh_largest_midpoint = (dbh_largest + 91.44)/2) %>%    # calculate the midpoint
+  mutate(dbh_largest_in2 = (dbh_largest_midpoint/2.54)^2,       # convert cm to in then square
+         basal_largest_ft2 = 0.005454*dbh_largest_in2, 
+         basal_largest_m2 = basal_largest_ft2/10.764,
+         basal_largest_ha = basal_largest_m2/0.067245) %>% 
+  group_by(join_plot) %>% 
+  summarize(sum_basal_final = sum(basal_largest_ha)) 
+
+######################################## merge data frames ###########################################
+
+all_basal_join <- inner_join(fia_basal_smallest, fia_basal_largest, by = "join_plot")
+
+
+```
+

@@ -1,0 +1,2311 @@
+---
+title: "Tree Size Class and Size Class Distribution"
+output: html_document
+author: AMP and Jen
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+```
+
+
+Q: consider removing plots with disturbances that can affect veg structure like canopy fire and logging. Minnich et al. 1995 analayzed plots that had recently been logged separtly
+
+
+```{r, warning=F, message=F}
+library(tidyverse)
+library(tidyr)
+library(ggpubr)
+library(janitor)
+```
+
+
+# Data
+```{r, message=F, warning=F}
+fia <- read.csv("G:/Github/gotforestry/R/final_binded_fia_ypmc_data.csv") 
+vtm <- read_csv("G:/Github/gotforestry/vtm_data/vtm_dataset_750m_buffer_FINAL.csv") 
+
+fia_count <- fia %>% group_by(unique_plot) %>% dplyr::count()
+vtm_count <- vtm %>% group_by(plotkey) %>% count()
+```
+parse issues when use read_csv to read in the fia data (some columns are read in as all NAs). using read.csv fixes the issue https://stackoverflow.com/questions/46778853/read-csv-parsing-error-message-how-to-interpret
+
+
+#Tidy data for dbh analysis
+
+*VTM data*
+- pivot longer to get dbh into a single column
+- uncount: trees for each dbh class were in a "count" column so uncount was used to make 1 row per observation
+- remove species adn genus columns. Dont need
+- rename "abbreviation" column to species bc that column contains the species
+- change PICO3 to PICO
+- convert elevation from feet to meters
+- group elevation into elevation bands
+
+*FIA data*
+- group dbh into vtm class sizes
+- remove trees with dbh < 4in
+
+*Both data frames*
+- group pije and pipo into a singe species called "yellow pine" 
+- classify species as shade (intolerant)/fire (in)tolerant
+- classify species in "pines" or "oaks"
+- group elevation into elevation bands
+
+
+```{r, warning=F, message=F}
+###################################### vtm data ######################################
+vtm_dbh <- vtm %>% 
+  pivot_longer('dbh_4_11':'dbh_36',
+               names_to = "dbh_class",
+               values_to = "dbh_count") %>% 
+  filter(dbh_count != 0) %>% # get error when use uncount() and there are rows with a value of 0
+  tidyr::uncount(dbh_count) %>% 
+  mutate(dbh_class = case_when(
+    dbh_class == "dbh_4_11" ~ "10.2–30.4",
+    dbh_class == "dbh_12_23" ~ "30.5–60.9",
+    dbh_class == "dbh_24_35" ~ "61.0–91.3",
+    dbh_class == "dbh_36" ~ "91.4+"
+  )) %>% 
+  mutate(dbh_class = as.factor(dbh_class),
+         dbh_class = fct_relevel(dbh_class, levels=c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")))  %>% 
+  dplyr::select(-genus, -species) %>% 
+  rename(species = abbreviation) %>% 
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine"),
+         species = str_replace(species, pattern = "PICO3", "PICO")) %>% # change pico3 to pico 
+  mutate(species = fct_relevel(species, levels =c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE"))) %>% 
+  mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(elev_m = elevation/3.281) %>% 
+  mutate(elevation_class = case_when(
+    elev_m < 500 ~ "0-500",
+    elev_m <= 1000 ~ "500-1,000",
+    elev_m <= 1500 ~ "1,000-1,500",
+    elev_m <= 2000 ~ "1,500-2,000",
+    elev_m <= 2500 ~ "2,000-2,500",
+    elev_m >= 2500 ~ "2,500+"
+  )) %>% 
+  mutate(elevation_class = as.factor(elevation_class),
+         elevation_class = fct_relevel(elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+")))
+
+########################################## FIA ########################################### 
+fia_dbh <- fia %>% 
+  filter(!is.na(dbh)) %>% 
+  mutate(dbh_class = case_when(
+    dbh < 10.2 ~ "0–10.2",       
+    dbh <= 30.4 ~ "10.2–30.4",  
+    dbh <= 60.9 ~ "30.5–60.9", 
+    dbh < 91.44 ~ "61.0–91.3", 
+    dbh >= 91.44 ~ "91.4+"
+  )) %>% 
+  filter(dbh_class != "0–10.2") %>% 
+  mutate(species = str_replace(species, pattern = "PIJE", "Yellow Pine"), # group pije and pipo
+         species = str_replace(species, pattern = "PIPO", "Yellow Pine")) %>% 
+  mutate(wilderness = case_when(
+    reserved %in% c("Y", "Reserved/Wilderness") ~ "Y",
+    reserved %in% c("N", "Not Reserved/Wilderness") ~ "N")) %>% 
+ mutate(shade_tolerance = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(shade_tolerance2 = case_when(
+    species %in% c("Yellow Pine", "PILA", "PICO", "PSMA", "QUKE") ~ "Shade Intolerant/Fire Tolerant",
+    species %in% c("ABCO", "CADE", "QUCH") ~ "Shade Tolerant/Fire Intolerant")) %>% 
+  mutate(lifeform = case_when(
+    species %in% c("PSMA", "PICO", "ABCO", "CADE", "Yellow Pine", "PILA") ~ "Conifers",
+    species %in% c("QUCH", "QUKE") ~ "Oaks"
+  )) %>% 
+  mutate(elevation_class = case_when(elev <= 1500 ~ "1,000-1,500",
+                                     elev <= 2000 ~ "1,500-2,000",
+                                     elev <= 2500 ~ "2,000-2,500",
+                                     elev >= 2500 ~ "2,500+")) 
+
+# fct_relevel wouldn't work properly in mutate() for these two variables in fia data
+fia_dbh$dbh_class <- factor(fia_dbh$dbh_class, levels = c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")) 
+fia_dbh$species <- factor(fia_dbh$species, levels= c("ABCO", "CADE", "PICO", "PILA", "PSMA", "Yellow Pine", "QUCH", "QUKE")) 
+fia_dbh$elevation_class <- factor(fia_dbh$elevation_class, levels=c("1,000-1,500", "1,500-2,000", "2,000-2,500", "2,500+"))
+
+```
+Minnich et al. 1995 dbh classes: Need a reference since vtm uses hard cut offs for dbh, but fia uses actuall numbers so dbh can fall between ex/ 11 and 12in. Weirdly, his conversions btw cm and inches does not match the actual conversion btw units nor does it match the units used in his graphs (10-30, 31-60, 61-91, 91+).  
+
+Dolanc et al. 2014; hugh is a coauthor dbh classes: 10.2-30.4 cm (4-12 in), 30.5-60.9 cm (12-24 in), 61.0-91.3 cm (24-36 in) and >91.4 cm (36 in). --> used above
+
+stem density: https://www.fia.fs.fed.us/library/database-documentation/current/ver80/FIADB%20User%20Guide%20P2_8-0.pdf 
+
+- see digital page 32 for the equations; they refer to stem density as TPA or trees per acre). 
+
+- see TPA_UNADJ (Trees per acre unadjusted) in trees.csv for more info.  The number of trees per acre that the sample tree theoretically represents based on the sample design. For fixed-radius plots taken with the mapped plot design (PLOT.DESIGNCD = 1), TPA_UNADJ is set to a constant derived from
+the plot size and equals 6.018046 for trees sampled on subplots, 74.965282 for trees
+sampled on microplots, and 0.999188 for trees sampled on macroplots. Variable-radius
+plots were often used in earlier inventories, so the value in TPA_UNADJ decreases as the
+tree diameter increases. Based on the procedures described in Bechtold and Patterson
+(2005), this attribute must be adjusted using factors stored in the POP_STRATUM table to
+derive population estimates. 
+
+-There are 10,000 m² per hectare (abbreviated as “ha”), so once you determine the mean (average) number of trees per plot you can easily convert it to this unit. For example, a 10m x 10m plot  = 100m². If you had an mean of 18 trees per plot, then the density would be 18 x 100 = 1800 trees/hectare.
+
+-Density is simply the number of trees per unit area and is generally reported as the number of trees per hectare (1 hectare = 2.47 acres).
+
+- elevation bands= from dolanc et al. 2014. They grouped elevation into 500m increments which makes senses
+
+
+```{r}
+# mean vtm dbh
+
+# mean fia dbh
+mean_fia <- fia_tidy %>% filter(lifeform != "Oaks") %>% summarise(mean = mean(dbh))
+
+a <- vtm_dbh %>% 
+  filter(species == "CADE") %>% 
+  filter(dbh_class == "91.4+")
+
+b <- fia_dbh %>% 
+  filter(species == "CADE") %>% 
+  filter(dbh_class == "91.4+")
+
+c <- vtm_dbh %>% 
+  filter(species == "CADE") %>% 
+  filter(elevation_class == "1,000-1,500")
+
+d <- fia_dbh %>% 
+  filter(species == "CADE") %>% 
+  filter(elevation_class == "1,000-1,500")
+
+e <-  fia_dbh %>% filter(species == "CADE")
+ggplot(e, aes(x = dbh)) + geom_density() + facet_wrap(~elevation_class)
+
+f <- fia %>% 
+  filter(species %in% c("CADE", "ABCO", "QUCH") ) %>% 
+  filter(dbh < 10.2) %>% 
+  mutate(elevation_class = case_when(elev <= 1500 ~ "1,000-1,500",
+                                     elev <= 2000 ~ "1,500-2,000",
+                                     elev <= 2500 ~ "2,000-2,500",
+                                     elev >= 2500 ~ "2,500+")) %>% 
+  group_by(species, elevation_class) %>% 
+  tally()
+  
+g <- fia %>% 
+  filter(dbh < 10.2) %>% 
+  group_by(species) %>% 
+  tally()
+
+```
+
+
+# Total DBH Classes
+
+total stem density by plot
+
+```{r, warning=F, message=F}
+####################################### sub data ####################################### 
+
+# calc avg stem density/ size class
+vtm_basic_df <- vtm_dbh %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  mutate(stem_density = n/0.0809) %>%  # trees/ha (stem density) in each size class
+  #filter(plotkey%in% c("154B14", "154B117", "154D13")) %>%  
+  group_by(dbh_class) %>% 
+  summarize(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "VTM")
+
+fia_basic_df <- fia_dbh %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  mutate(stem_density = n/0.067245) %>% 
+  group_by(dbh_class) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "FIA")
+
+dbh_basic_df <- rbind(vtm_basic_df, fia_basic_df)
+
+####################################### graph ####################################### 
+ggplot(dbh_basic_df, aes(x=dbh_class, y= avg_stem_density, group = fct_rev(data))) + 
+  geom_col(aes(fill = fct_rev(data)), position = position_dodge(width=0.9), color="black") +
+  #geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  #geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(avg_stem_density, 0), x = dbh_class), 
+            position=position_dodge(width = 0.9), 
+            vjust = -1.8)+
+  #scale_shape_manual(values = 4, labels = "Median", name = "") +
+  #scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.1) +
+  theme_bw() +
+  labs(x = "DBH Bins (cm)", y = "Trees/Hectare\n", title = "Average YPMC Tree Density by Size Class", subtitle ="") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        #legend.title = element_text("Data Source"),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        #legend.box.background = element_rect(colour = "black"),
+       # legend.box.margin = margin(2, 2, 2, 2),
+        #legend.spacing.y = unit(0.3, "cm"),
+        axis.title.x = element_text (face = "bold"),
+        axis.title.y = element_text (face = "bold"),
+        plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) + #shorten distance between two legends
+  scale_y_continuous(lim=c(0,250),
+                    expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels = c("Historic", "Current"),name= "Data Source")
+
+####################################### % change #######################################   
+# pct_change_tree_density_dbh <- dbh_basic_df %>%
+#   select(dbh_class, avg_stem_density, data) %>%
+#   mutate(data = as.factor(data),
+#          data = fct_relevel(data, levels=c("FIA", "VTM"))) %>% # Tried to refactor data variable, but I don't think that does anything
+#   group_by(dbh_class) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# 
+# pct_change_tree_density_dbh$pct_change
+
+# DBH 10.2–30.4: -41.68 %
+# DBH 30.5–60.9: -14.71 %
+# DBH 61.0–91.3: -46.96 %
+# DBH 91.4+: -41.68 %
+
+######################################### Stats Tests ###########################################
+vtm_basic_df2 <- vtm_dbh %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  mutate(stem_density = n/0.0809) %>% 
+   ungroup() %>% 
+  select(dbh_class, stem_density)
+
+fia_basic_df2 <- fia_dbh %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  mutate(stem_density = n/0.067245)%>% 
+  ungroup() %>% 
+  select(dbh_class, stem_density)
+
+basic_df2 <- rbind(vtm_basic_df2, fia_basic_df2)
+
+total_aov <- aov(avg_stem_density ~ dbh_class, data = dbh_basic_df)
+summary(total_aov)
+
+```
+__Percent change in average tree density from VTM to FIA:__
+
+- **DBH	10.2–30.4:** `r round(pct_change_tree_density_dbh$pct_change[5], 2)`
+- **DBH 30.5–60.9:** `r round(pct_change_tree_density_dbh$pct_change[6], 2)`
+- **DBH 61.0–91.3:** `r round(pct_change_tree_density_dbh$pct_change[7], 2)`
+- **DBH 91.4+:**`r round(pct_change_tree_density_dbh$pct_change[8], 2)`
+
+
+# total stem density by landscape
+```{r, warning=F, message=F}
+####################################### sub data ####################################### 
+
+# calc avg stem density/ size class
+vtm_basic_df1 <- vtm_dbh %>% 
+  group_by(plotkey, dbh_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  group_by(dbh_class) %>% 
+  mutate(stem_density = n/0.0809) %>%  # trees/ha (stem density) in each size class
+  summarize(landscape_avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>%  
+  mutate(data = "VTM")
+
+fia_basic_df1 <- fia_dbh %>% 
+  group_by(join_plot, dbh_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  mutate(stem_density = n/0.067245) %>% 
+  group_by(dbh_class) %>% 
+  summarise(landscape_avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "FIA")
+
+dbh_basic_df1 <- rbind(vtm_basic_df1, fia_basic_df1)
+
+####################################### graph ####################################### 
+ggplot(dbh_basic_df1, aes(x=dbh_class, y= landscape_avg_stem_density, group = fct_rev(data))) + 
+  geom_col(aes(fill = fct_rev(data)), position = position_dodge(width=0.9), color="black") +
+  #geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  #geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(landscape_avg_stem_density, 0), x = dbh_class), 
+            position=position_dodge(width = 0.9), 
+            vjust = -1.8)+
+  #scale_shape_manual(values = 4, labels = "Median", name = "") +
+  #scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class,
+                    ymin = landscape_avg_stem_density - se,
+                    ymax = landscape_avg_stem_density + se),
+                color = "black",
+                width = 0.1) +
+  theme_bw() +
+  labs(x = "DBH Bins (cm)", y = "Trees/Hectare\n", title = "Total Tree Density Across Landscape", subtitle = "") +
+  #labs(title = )
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        axis.title.x = element_text (face = "bold"),
+        axis.title.y = element_text (face = "bold"),
+        plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+        #legend.title = element_blank(),
+        #legend.key.size = unit(0.4, "cm"), # size of the text/key
+        #legend.box.background = element_rect(colour = "black"),
+        #legend.box.margin = margin(2, 2, 2, 2),
+        #legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends
+  scale_y_continuous(lim=c(0,250),
+                    expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels = c("Historic", "Current"), name= "Data Source", ) +
+  scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "94+"))
+
+ 
+
+####################################### % change #######################################     
+# pct_change_landscape_dbh <- dbh_basic_df1 %>%
+#   select(dbh_class, landscape_avg_stem_density, data) %>%
+#   group_by(dbh_class) %>%
+#   mutate(pct_change = (lag(landscape_avg_stem_density)/landscape_avg_stem_density-1)*100)
+# 
+# 
+# pct_change_landscape_dbh$pct_change
+
+# DBH 10.2–30.4: -42.56713 %
+# DBH 30.5–60.9: -17.18022 %
+# DBH 61.0–91.3: -57.30502 %
+# DBH 91.4+: -12.04754%
+```
+
+
+
+# lifeform
+
+## Check sample sizes first
+
+```{r}
+
+# I commented out the landscape analysis code because I think I'm supposed to ignore the plots that don't have the species in interest here in order to get the sample sizes
+
+# VTM sample size table ----
+vtm_lifeform_sample <- vtm_dbh %>% 
+  group_by(dbh_class, lifeform) %>% 
+  tally() 
+
+# FIA Sample Size Table ---
+fia_lifeform_sample <- fia_dbh %>% 
+  group_by(dbh_class, lifeform) %>% 
+  tally() 
+
+lifeform_bind_sample <- rbind(vtm_lifeform_sample, fia_lifeform_sample)
+
+# Remove sample sizes less than 10
+lifeform_bind_sample_final <- lifeform_bind_sample %>% 
+   filter(n > 10) # Remove sample sizes less than 10 
+```
+
+Grouping with sample sizes between 10 and 20 (found only 1):
+
+- 91.4+ Oaks (VTM) - 21
+
+Grouping with sample sizes less than 10 (need to remove):
+
+- 91.4+ Oaks (FIA) - 8
+
+## Graphs
+
+```{r}
+
+####################################### sub data ####################################### 
+# calc avg stem density/ size class
+vtm_lifeform <- vtm_dbh %>% 
+  group_by(plotkey, dbh_class, lifeform) %>% 
+  tally() %>% 
+  mutate(stem_density = as.numeric(n)/0.0809)  %>% 
+  dplyr::select(-n) %>%
+  pivot_wider(names_from = lifeform,
+              values_from = stem_density) %>% 
+  mutate(Conifers = replace_na(Conifers, 0),
+         Oaks = replace_na(Oaks, 0)) %>% 
+  pivot_longer(Conifers:Oaks,
+               names_to = "lifeform",
+               values_to = "stem_density") %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  group_by(dbh_class, lifeform) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n()))) %>% 
+  filter(dbh_class != "x91_4" | lifeform != "Oaks") %>% 
+  mutate(data = "VTM") 
+
+fia_lifeform <- fia_dbh %>% 
+  group_by(join_plot, dbh_class, lifeform) %>% 
+  tally() %>% 
+  mutate(stem_density = as.numeric(n)/0.067245)  %>% 
+  dplyr::select(-n) %>%
+  pivot_wider(names_from = lifeform,
+              values_from = stem_density) %>% 
+  mutate(Conifers = replace_na(Conifers, 0),
+         Oaks = replace_na(Oaks, 0)) %>% 
+  pivot_longer(Conifers:Oaks,
+               names_to = "lifeform",
+               values_to = "stem_density") %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "stem_density") %>% 
+  group_by(dbh_class, lifeform) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n()))) %>% 
+  filter(dbh_class != "x91_4" | lifeform != "Oaks") %>% 
+  mutate(data = "FIA")
+
+# Join the two datasets together
+lifeform_bind <- rbind(vtm_lifeform, fia_lifeform)
+
+# Remove grouping that had sample size less than 10; code's not working here, need to find out something better - Jen
+#lifeform_bind_final <- right_join(lifeform_bind, lifeform_bind_sample_final, by = c("dbh_class", "lifeform", "data")) 
+
+####################################### graph ####################################### 
+
+ggplot(lifeform_bind, aes(x=dbh_class, y= avg_stem_density, group=fct_rev(data))) + 
+  geom_col(aes(fill=fct_rev(data)), position = position_dodge(width=0.9), color="black") + 
+  #geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  #geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  geom_text(aes(label=round(avg_stem_density, 0), x = dbh_class),
+            position=position_dodge(width = 0.9),
+            vjust = -2.5)+
+  #scale_shape_manual(values = 4, labels = "Median", name = "") +
+  #scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.3) +
+  labs(x = "DBH Class (cm)", y = "Trees/Hectare\n", title = "Average YPMC Tree Density by Size Class", subtitle ="") + 
+  facet_wrap(~lifeform) +
+  theme_bw()+
+  scale_y_continuous(lim=c(0,150), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        #legend.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        axis.title.x = element_text (face = "bold"),
+        axis.title.y = element_text (face = "bold"),
+        plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)))+
+        #legend.box.background = element_rect(colour = "black"),
+        #legend.box.margin = margin(1, 5, 5, 5),
+        #legend.spacing.y = unit(-0.1, "cm")) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels = c("Historic", "Current"),name= "Data Source") +
+  scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "91.4+"))
+
+
+####################################### % change #######################################   
+# pct_change_lifeform_dbh <- lifeform_bind %>%
+#   select(dbh_class, lifeform, avg_stem_density, data) %>%
+#   mutate(data = as.factor(data),
+#          data = fct_relevel(data, levels=c("FIA", "VTM"))) %>% # Tried to refactor data variable, but I don't think that does anything
+#   group_by(dbh_class, lifeform) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_lifeform_dbh$pct_change
+
+# Oaks
+# DBH 10.2–30.4: -50.581528 %
+# DBH 30.5–60.9: -26.855568 %
+# DBH 61.0–91.3: -31.879282 %
+# DBH 91.4+: 58.685807 %
+
+# Pines
+# DBH 10.2–30.4: 2.251433 %
+# DBH 30.5–60.9: -7.371550 %
+# DBH 61.0–91.3: -45.104909 %
+# DBH 91.4+: -8.542230 %
+```
+
+__Percent change in average tree density from VTM to FIA:__
+
+__Oaks__
+
+- **DBH	10.2–30.4:** `r round(pct_change_lifeform_dbh$pct_change[9], 2)`
+- **DBH 30.5–60.9:** `r round(pct_change_lifeform_dbh$pct_change[11], 2)`
+- **DBH 61.0–91.3:** `r round(pct_change_lifeform_dbh$pct_change[13], 2)`
+- **DBH 91.4+:**`r round(pct_change_lifeform_dbh$pct_change[15], 2)`
+
+__Pines__
+
+- **DBH	10.2–30.4:** `r round(pct_change_lifeform_dbh$pct_change[10], 2)`
+- **DBH 30.5–60.9:** `r round(pct_change_lifeform_dbh$pct_change[12], 2)`
+- **DBH 61.0–91.3:** `r round(pct_change_lifeform_dbh$pct_change[14], 2)`
+- **DBH 91.4+:**`r round(pct_change_lifeform_dbh$pct_change[16], 2)`
+
+```{r Combined DBH Classes and Genus graphs}
+
+# Copied from Leana's and Hannah's code 
+
+# dataframes to combine
+dbh_basic_df_2 <- dbh_basic_df %>% 
+  mutate("lifeform" = "All YPMC Species") #%>% 
+  #rename("data" = "plot")
+
+combined_lifeform_2 <- lifeform_bind #%>% 
+  #rename("species" = "plot")
+
+#combined_genus$type <- as.character(combined_genus$type)
+#combined_genus$type[combined_genus$type == "fia"] <- "FIA"
+#combined_genus$type[combined_genus$type == "vtm"] <- "VTM"
+##------------------------------------------------------------------------------------
+
+# combine dataframes
+combined_dbh_breakdown <- combined_lifeform_2 %>% 
+  full_join(dbh_basic_df_2)  
+#combined_density_breakdown$type[combined_density_breakdown$type == "VTM"] <- "vtm"
+#combined_density_breakdown$type[combined_density_breakdown$type == "FIA"] <- "fia"
+##------------------------------------------------------------------------------------
+
+# create a factor order
+combined_order_2 <- c("Pinaceae", "Fagaceae", "All YPMC Species")
+data_order_2 <- c("VTM", "FIA")
+##------------------------------------------------------------------------------------
+
+# make graph #1 - this may have been done already in our own code
+combined_graph_1 <- ggplot(combined_dbh_breakdown,
+                           aes(x=factor(data, data_order_2),
+                               y=avg_stem_density,
+                               fill=factor(lifeform, combined_order_2))) +
+  geom_col(stat="identity",position=position_dodge(width = 0.4), width = 0.4)+
+  geom_text(aes(label=round(avg_stem_density, 0)), position=position_dodge(width = 0.4), vjust=-1.6, size = 3)+
+  geom_point(data = combined_dbh_breakdown, aes(x=data, y= avg_stem_density),position=position_dodge(width = 0.4), color = "black", size = 1.3, shape = 16)+
+geom_errorbar(data = combined_dbh_breakdown,
+              position=position_dodge(width = 0.4),
+                aes(x = data, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.08) +
+  geom_point(aes(x = data, y = median), position=position_dodge(width = 0.4), vjust=-0.3, shape = 4) +
+  scale_fill_manual(values = c("#DF869C", "#982845","#6D182D" ), 
+                    labels = c("Pinaceae", "Fagaceae", "All YPMC Species"), 
+                    name = "Family")+
+  theme_bw()+
+  facet_wrap(~dbh_class, nrow = 1) +
+  labs(title = "Average YPMC Tree Density by Size Class", x = "",subtitle = "Within Areas Containing the Trees of Interest", y = "Average Stem Density (Trees/Hectare)") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.title.x = element_text (face = "bold",
+                                     margin=margin(10,0,0,0))) +
+  theme(axis.title.y = element_text (face = "bold",
+                                     margin=margin(0,10,0,0)))+
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 450))+
+  theme(plot.subtitle = element_text(hjust= 0.5,
+                                  margin=margin(0,0,10,0))) +
+  theme(axis.text.x = element_text(color = "black", size = 9))+
+  guides(fill = guide_legend(override.aes = list(shape = "")))
+
+combined_graph_1
+
+ggsave("size_class_family_graph1.png")
+##------------------------------------------------------------------------------------
+
+# make graph #2
+# dataset to use:combined_dbh_breakdown
+newest_order <- c("VTM", "FIA")
+
+combined_graph_2 <- ggplot(combined_dbh_breakdown,
+                           aes(x=lifeform,
+                               y=avg_stem_density,
+                               fill=factor(data, newest_order)))+
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels=c("VTM", "FIA"), name = "Data source")+
+  geom_col(stat="identity",
+           position=position_dodge(width = 0.4), 
+           width = 0.4)+
+  geom_text(aes(label=round(avg_stem_density, 0)), 
+            position=position_dodge(width = 0.4), 
+            vjust=-1.6, 
+            size = 3)+
+  geom_point(data = combined_dbh_breakdown, 
+             aes(x=lifeform, y= avg_stem_density),
+             position=position_dodge(width = 0.4), 
+             color = "black", 
+             size = 1.3, 
+             shape = 16)+
+  geom_errorbar(data = combined_dbh_breakdown,
+              position=position_dodge(width = 0.4),
+                aes(x = lifeform, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.08) +
+  geom_point(aes(x = lifeform, y = median), position=position_dodge(width = 0.4), vjust=-0.3, shape = 4) +
+  facet_wrap(~dbh_class, nrow = 1) +
+  theme_bw()+
+  labs(title = "Average YPMC Tree Density by Size Class", x = "Species",subtitle = "Within Areas Containing the Trees of Interest", y = "Trees/Hectare") +
+  theme(plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0)),
+        axis.title.x = element_text(face = "bold",
+                                    margin=margin(10,0,0,0)),
+        axis.title.y = element_text(face = "bold",
+                                    margin=margin(0,10,0,0)),
+        plot.subtitle = element_text(hjust= 0.5,
+                                  margin=margin(0,0,10,0)),
+        axis.text.x = element_text(angle = 40, 
+                                   vjust = 1,
+                                   hjust = 1,
+                                   color = "black", 
+                                   size = 9)) +
+  scale_y_continuous( expand = c(0,0))+
+  expand_limits(y = c(0, 450))+
+  guides(fill = guide_legend(override.aes = list(shape = "")))
+
+combined_graph_2
+
+ggsave("size_class_family_graph2.png")
+
+```
+# DBH by Species
+
+## species
+
+avg stem densityfor each species in eahc dbh cass 
+
+by amp
+
+### Check sample sizes first
+
+```{r}
+
+# VTM sample size table ----
+vtm_species_sample <- vtm_dbh %>% 
+  group_by(dbh_class, species) %>% 
+  tally() %>% 
+  filter(n < 15) %>% 
+  mutate(dbh2 = case_when(
+    dbh_class == "10.2–30.4" ~ "x10_2_30_4",
+    dbh_class == "30.5–60.9" ~ "x30_5_60_9",
+    dbh_class == "61.0–91.3" ~ "x61_0_91_3",
+    dbh_class == "91.4+" ~ "x91_4"
+  )) %>% 
+  unite(temp, c("species", "dbh2"), sep = "_")%>% 
+  mutate(temp = str_to_lower(temp))
+
+vtm_remove <- vtm_species_sample$temp
+
+# FIA Sample Size Table ---
+fia_species_sample <- fia_dbh %>% 
+  group_by(dbh_class, species) %>% 
+  tally()%>% 
+  filter(n < 15) %>% 
+  mutate(dbh2 = case_when(
+    dbh_class == "10.2–30.4" ~ "x10_2_30_4",
+    dbh_class == "30.5–60.9" ~ "x30_5_60_9",
+    dbh_class == "61.0–91.3" ~ "x61_0_91_3",
+    dbh_class == "91.4+" ~ "x91_4"
+  )) %>% 
+  unite(temp, c("species", "dbh2"), sep = "_") %>% 
+  mutate(temp = str_to_lower(temp))
+
+fia_remove <- fia_species_sample$temp
+
+all_species_sample <- rbind(vtm_species_sample, fia_species_sample)
+
+species_remove <- all_species_sample$temp
+```
+
+### Graphs 
+```{r, warning=F, message=F}
+
+####################################### sub data ####################################### 
+
+## all vtm data 
+vtm_species <- vtm_dbh %>% 
+  filter(species != "PSMA") %>%  # remove PSMA from species graph
+  group_by(plotkey, dbh_class, species) %>% 
+  tally() %>% 
+  mutate(stem_density = as.numeric(n)/0.0809)  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class', 
+               values_to = 'stem_density') %>% 
+  pivot_wider(names_from = species,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>% 
+  pivot_longer(abco:pico,
+               names_to = "species",
+               values_to = "stem_density") %>% 
+  group_by(dbh_class, species) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample = n()) %>% 
+  unite(temp, c("species", "dbh_class"), sep = "_", remove = F) %>% 
+  filter(!temp %in% species_remove) %>%  # Remove sample sizes less than 15 
+  mutate(data = "VTM") 
+
+# data split up into pine and oak
+vtm_pine <- vtm_species %>% 
+  filter(!species %in% c("QUCH", "QUKE"))
+vtm_oak <- vtm_species %>% 
+  filter(species %in% c("QUCH", "QUKE"))
+
+## all fia data
+fia_species <- fia_dbh %>% 
+  #filter(admin_forest == "LPNF") %>% 
+  filter(species != "PSMA") %>%  # remove PSMA from species graph
+  group_by(join_plot, dbh_class, species) %>% 
+  tally() %>% 
+  mutate(stem_density = as.numeric(n)/0.067245)  %>% 
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, 0),
+         x30_5_60_9 = replace_na(x30_5_60_9, 0),
+         x61_0_91_3 = replace_na(x61_0_91_3, 0),
+         x91_4 = replace_na(x91_4, 0)) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class', 
+               values_to = 'stem_density') %>% 
+  pivot_wider(names_from = species,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pico = replace_na(pico, 0),
+         pila = replace_na(pila, 0),
+         yellow_pine = replace_na(yellow_pine, 0),
+         quch = replace_na(quch, 0),
+         quke = replace_na(quke, 0)) %>% 
+  pivot_longer(yellow_pine:pico,
+               names_to = "species",
+               values_to = "stem_density") %>% 
+  group_by(dbh_class, species) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n()))) %>% 
+  unite(temp, c("species", "dbh_class"), sep = "_", remove = F) %>% 
+  filter(!temp %in% species_remove) %>%  # Remove sample sizes less than 15 
+  mutate(data = "FIA")
+
+# split fia data into pine and oaks
+fia_pine <- fia_species %>% 
+  filter(!species %in% c("QUCH", "QUKE"))
+fia_oak <- fia_species %>% 
+  filter(species %in% c("QUCH", "QUKE"))
+
+dbh_species_all <- rbind(vtm_species, fia_species)
+dbh_species_pine <- rbind(vtm_pine, fia_pine)
+dbh_species_oak <- rbind(vtm_oak, fia_oak)
+
+dbh_species_all <- dbh_species_all %>% 
+  mutate(species = fct_relevel(species, levels = c("abco", "cade", "pico", "pila", "yellow_pine", "quch", "quke")))
+
+####################################### graph ####################################### 
+#this format is similar to Minnich et al. 1995
+dbh_species_vtm <- ggplot(vtm_species, aes(x=species, y=avg_stem_density)) + 
+  geom_col(aes(fill=dbh_class), stat = 'identity', position='dodge') +
+  scale_y_continuous(lim=c(0,700), breaks=seq(0, 700, by=50)) +
+  labs(title="VTM",
+       fill="DBH Class (cm)")
+
+dbh_species_fia <- ggplot(fia_species, aes(x=species, y=avg_stem_density)) + 
+  geom_col(aes(fill=dbh_class), stat = 'identity', position='dodge') +
+  scale_y_continuous(lim=c(0,700), breaks=seq(0, 700, by=50)) +
+  labs(title="FIA",
+       fill="DBH Class (cm)")
+
+ggarrange(dbh_species_vtm, dbh_species_fia, ncol=1)
+
+############################ single graph for each species ####################################### 
+species_names <- c(abco = 'ABCO', cade = "CADE", pico = "PICO", pila = "PILA", yellow_pine = "Yellow Pine", quch = "QUCH", quke = "QUKE")
+# this is the format bruce recommended
+ggplot(dbh_species_all, aes(x=dbh_class, y = avg_stem_density, group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position=position_dodge(0.9), stat = "identity", color = "black")+
+  #geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  #geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  #scale_shape_manual(values = 4, labels = "Median", name = "") +
+  #scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.4) +
+  facet_wrap (~species, nrow=2, scale = "free_y", 
+              labeller = as_labeller(species_names)) +
+  theme_classic() +
+  labs(x = "DBH Bins (cm)", y = "Average Density (Trees/ha)\n") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends
+ #scale_y_continuous(lim=c(0,250),
+  #                  expand=c(0,0)) +
+ scale_fill_manual(values = c("#8EBB90", "#1D734D"))+
+ scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "91.4+"))
+
+ggsave("dbh by species.jpg", width=10, height=6)
+
+####################################### % change #######################################   
+
+# pct_change_species_dbh <- dbh_species_all %>%
+#   select(dbh_class, species, avg_stem_density, data) %>%
+#   group_by(dbh_class, species) %>%
+#   mutate(pct_change = )
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_species_dbh
+# 
+# write_csv(pct_change_species_dbh, "pct_change_species_dbh.csv")
+
+############################## graph for each PINE species ####################################### 
+
+ggplot(dbh_species_pine, aes(x=dbh_class, y = avg_stem_density, group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position=position_dodge(0.9), stat = "identity", color = "black")+
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.4) +
+  facet_wrap (~species, scales="free_x") +
+  theme_classic() +
+  labs(x = "DBH Bins (cm)", y = "Average Density (Trees/ha)\n", title = "Tree Size Class by Pine Species") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2)) +
+ scale_y_continuous(lim=c(0,100),
+                    expand=c(0,0)) +
+ scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+############################## graph for each OAK species ####################################### 
+
+# ggplot(dbh_species_oak, aes(x=dbh_class, y = avg_stem_density, group=fct_rev(data))) +
+#   geom_col(aes(fill = fct_rev(data)), position=position_dodge(0.9), stat = "identity", color = "black")+
+#   geom_errorbar(position=position_dodge(width=0.9),
+#                 aes(x = dbh_class, 
+#                     ymin = avg_stem_density - se,
+#                     ymax = avg_stem_density + se),
+#                 color = "black",
+#                 width = 0.4) +
+#   facet_wrap (~species, scales="free_x") +
+#   theme_classic() +
+#   labs(x = "DBH Bins (cm)", y = "Average Density (Trees/ha)\n", title = "Tree Size Class by Oak Species") +
+#   theme(panel.border = element_rect(colour = "black", fill=NA),
+#         legend.title = element_blank(),
+#         axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+#         legend.key.size = unit(0.4, "cm"), # size of the text/key
+#         legend.box.background = element_rect(colour = "black"),
+#         legend.box.margin = margin(2, 2, 2, 2)) +
+#  scale_y_continuous(lim=c(0,250),
+#                     expand=c(0,0)) +
+#  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+```
+
+fun fact, there is no QUKE in ANF in the raw fia data (double checked the raw data)
+
+*ABCO*:There was an increase in stems/ha of abco in the smallest size class, which matches with results from Minnich et al. 1995. 
+
+*CADE*: There was a decrease in CADE in the smallest size class between vtm adn fia data. I wonder if removing fire affected plots in the vtm data will change this since in personal experience cade can be a prolific germinate post wildfire. There was also an increase in CADE in the largest dbh class. 
+
+*PICO*: there was a large increase in pico in the smallest size class. pico is a prolific germinator after severe wildifre since it can have fire cued seed germination. Again, I wonder if removing recently burned plots will affect this. 
+
+*PIJE* and *PIPO*: Hard to compare pije and pipo changes since we are unsure if the vtm collectors correclty recorded pije adn pipo. Either way, there is a high # of pije in the smallest size class. Which is good for the future continuation of the species. 
+
+*PILA*: There was an increase in stems/ha of pila in the two largest dbh classes. 
+
+*QUCH* and *QUKE*: There was a decrease in the stems/ha of oaks int he smallest size class (at least for quch, hard to tell in quke) and the largest size class, but there was an increase in stems/ha of oaks in the two middle class sizes. This (I believe) matches the results of minnich et al. 1995
+
+## boxplot
+```{r}
+################################## subdata #################################### 
+# do this to better see the spread
+
+## all vtm data
+vtm2 <- vtm_dbh %>% 
+  group_by(plotkey, dbh_class, species) %>% 
+  tally() %>% 
+  mutate(stem_density = n/0.0809)%>% 
+  mutate(data = "VTM")
+
+# data split up into pine and oak
+vtm_pine2 <- vtm2 %>% 
+  filter(!species %in% c("QUCH", "QUKE"))
+vtm_oak2 <- vtm2 %>% 
+  filter(species %in% c("QUCH", "QUKE"))
+
+## all fia data
+fia2 <- fia_dbh %>% 
+  group_by(join_plot, dbh_class, species) %>% 
+  tally() %>% 
+  group_by(dbh_class, species) %>% 
+  mutate(stem_density = n/0.067245) %>% 
+  mutate(data = "FIA")
+
+# split fia data into pine and oaks
+fia_pine2 <- fia2 %>% 
+  filter(!species %in% c("QUCH", "QUKE"))
+fia_oak2 <- fia2 %>% 
+  filter(species %in% c("QUCH", "QUKE"))
+
+dbh_species_all2 <- rbind(vtm2, fia2)
+dbh_species_pine2 <- rbind(vtm_pine2, fia_pine2)
+dbh_species_oak2 <- rbind(vtm_oak2, fia_oak2)
+
+################################## graph for ALL data #################################### 
+
+ggplot(dbh_species_all2, aes(x=dbh_class, y=stem_density)) + 
+  geom_boxplot(aes(fill = fct_rev(data))) +
+  facet_wrap (~species, nrow=2, scales="free_x") +
+  theme_classic() +
+  labs(x = "DBH Bins (cm)", y = "Density (Trees/ha)\n") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2)) +
+# scale_y_continuous(lim=c(0,250),
+ #                   expand=c(0,0)) +
+ scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+################################## graph for PINE data #################################### 
+
+ggplot(dbh_species_pine2, aes(x=dbh_class, y=stem_density)) + 
+  geom_boxplot(aes(fill = fct_rev(data))) +
+  facet_wrap (~species, nrow=2, scales="free_x") +
+  theme_classic() +
+  labs(x = "DBH Bins (cm)", y = "Density (Trees/ha)\n") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2)) +
+# scale_y_continuous(lim=c(0,250),
+ #                   expand=c(0,0)) +
+ scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+################################## graph for OAK data #################################### 
+
+ggplot(dbh_species_oak2, aes(x=dbh_class, y=stem_density)) + 
+  geom_boxplot(aes(fill = fct_rev(data))) +
+  facet_wrap (~species, scales="free_x") +
+  theme_classic() +
+  labs(x = "DBH Bins (cm)", y = "Density (Trees/ha)\n") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2)) +
+# scale_y_continuous(lim=c(0,250),
+ #                   expand=c(0,0)) +
+ scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+```
+
+
+
+
+# wilderness
+
+## wilderness by species 
+
+by amp
+
+
+```{r, warning=F, message=F}
+########################################  subdata ####################################### 
+
+# vtm_wilderness <- vtm_dbh %>% 
+#   group_by(dbh_class, species, wilderness) %>% 
+#   mutate(stem_density = n/0.0809) %>% 
+#   summarise(avg_stem_density = mean(stem_density)) %>% 
+#   mutate(data = "VTM")
+# 
+# fia_wilderness <- fia_dbh %>% # code started breaking around here (11/17/2020) - Jen
+#   group_by(dbh_class, species, wilderness) %>%
+#   mutate(stem_density = n/0.067245) %>% 
+#   summarise(avg_stem_density = mean(stem_density)) %>% 
+#   mutate(data = "FIA")
+# 
+# dbh_wilderness_df <- rbind(vtm_wilderness, fia_wilderness)
+# 
+# ########################################  graph ####################################### 
+# 
+# vtm_wilderness_graph <- ggplot(vtm_wilderness, aes(x = species, y=avg_stem_density))+
+#   geom_col(aes(fill=dbh_class), position='dodge')+
+#   theme(axis.text.x=element_text(angle=90))+
+#   facet_wrap(~wilderness)+
+#   labs(title="VTM",
+#        fill="DBH Class (cm)")
+# 
+# fia_wilderness_graph <- ggplot(fia_wilderness, aes(x = species, y=avg_stem_density))+
+#   geom_col(aes(fill=dbh_class), position='dodge')+
+#   theme(axis.text.x=element_text(angle=90))+
+#   facet_wrap(~wilderness)+
+#   labs(title="FIA",
+#        fill="DBH Class (cm)")
+# 
+# ggarrange(vtm_wilderness_graph, fia_wilderness_graph, ncol = 1)
+
+####################################### % change #######################################   
+#pct_change_wilderness_dbh <- dbh_wilderness_df %>%
+#  select(dbh_class, wilderness, avg_stem_density, data) %>%
+#  group_by(dbh_class, wilderness) %>%
+#  mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+
+```
+
+not sure if I can compare vtm vs fia wilderness % since i am not sure when the wilderness boundaries were established (b4 or after wieslander surveys??). 
+
+But there are still interesting trends between wildernes and not wilderness in the fia data. pipo, abco, and pije all have more trees with largest dbh class inside wilderness comapred to outside wilderness which is not surprising. What was interesting was the stem density for the smallest size class for abco, cade, pico, adn psma, was highest outside of wilderness. I would expect the opposite
+
+## total average wilderness
+
+```{r}
+####################################### sub data ####################################### 
+# calc avg stem density/ size class
+vtm_wilderness1 <- vtm_dbh %>% 
+  group_by(dbh_class, wilderness) %>% 
+  summarise(avg_stem_density = mean(stem_density))
+
+fia_wilderness1 <- fia_dbh %>% 
+  group_by(dbh_class, wilderness) %>% 
+  summarise(avg_stem_density = mean(stem_density))
+  
+  
+####################################### graph ####################################### 
+vtm_wilderness1 <- ggplot(vtm_wilderness1, aes(x=dbh_class, y= avg_stem_density)) + geom_col(aes(fill=wilderness), position='dodge') + labs(title="VTM", x = "DBH Class (cm)", y = "Average Stem Density") 
+fia_wilderness1 <- ggplot(fia_wilderness1, aes(x=dbh_class, y= avg_stem_density)) + geom_col(aes(fill=wilderness), position='dodge') + labs(title="FIA", x = "DBH Class (cm)", y = "Average Stem Density") 
+
+ggarrange(vtm_wilderness1, fia_wilderness1, ncol=1)
+
+```
+
+
+# shade/fire tolerance
+
+## excluding oaks
+
+### Check sample sizes first
+
+```{r Sample Size excluding Oaks}
+
+# VTM sample size table ----
+vtm_shade_sample <- vtm_dbh %>% 
+  filter(!is.na(shade_tolerance)) %>% 
+  group_by(dbh_class, shade_tolerance) %>% 
+  tally()  
+
+# FIA Sample Size Table ---
+fia_shade_sample <- fia_dbh %>% 
+  filter(!is.na(shade_tolerance)) %>% 
+  group_by(dbh_class, shade_tolerance) %>% 
+  tally() 
+
+shade_bind_sample <- rbind(vtm_shade_sample, fia_shade_sample)
+
+# Remove sample sizes less than 10
+shade_bind_sample_final <- shade_bind_sample %>% 
+   filter(n > 10) # Remove sample sizes less than 10 
+```
+
+No groupings with sample sizes less than 20 or less than 10.
+
+### graph
+```{r, warning=F, message=F}
+########################################  subdata ####################################### 
+
+vtm_shade <- vtm_dbh %>% 
+  filter(!is.na(shade_tolerance)) %>% # remove oaks
+  group_by(plotkey, dbh_class, shade_tolerance) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  mutate(stem_density = n/0.0809) %>%
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = shade_tolerance,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  pivot_longer(3:4,
+               names_to = 'shade_tolerance',
+               values_to = 'stem_density') %>% 
+  group_by(dbh_class, shade_tolerance) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "VTM") 
+
+
+fia_shade <- fia_dbh %>% 
+  filter(!is.na(shade_tolerance)) %>% 
+  group_by(join_plot, dbh_class, shade_tolerance) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  group_by(dbh_class, shade_tolerance) %>% 
+  mutate(stem_density = n/0.067245) %>%
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = shade_tolerance,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  pivot_longer(3:4,
+               names_to = 'shade_tolerance',
+               values_to = 'stem_density') %>% 
+  group_by(dbh_class, shade_tolerance) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "FIA")
+
+
+shade_bind <- rbind(vtm_shade, fia_shade)
+########################################  graph ####################################### 
+ggplot(shade_bind, aes(x=dbh_class, y=avg_stem_density, group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+  geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.3) +
+  facet_wrap(~shade_tolerance) +
+  theme_classic()+
+  labs(x = "DBH Class (cm)", y = "Average Density (Tree/ha)\n") +
+  scale_y_continuous(lim=c(0,100), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D")) +
+  scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "94+"))
+
+####################################### % change #######################################   
+# pct_change_shade_dbh <- shade_bind %>%
+#   select(dbh_class, shade_tolerance, avg_stem_density, data) %>%
+#   group_by(dbh_class, shade_tolerance) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_shade_dbh$pct_change
+```
+yahhh, now we're getting somewhere! :) Ignore my miserable attempt at adding error bars and look at the general trend of the graph. There is little to no difference in stem denstiy by shade tolerance in the vtm data, but there is an increase in stem density in shade tolerant species in the two smallest size class and a slight (probably not significant) increase in the 2 larger size classes. 
+
+shade intolerant = pije, pipo, pila, and psma
+shade tolerant = abco and cade
+
+pico and oaks are removed from the graphs above
+
+## including oaks
+
+### Check sample sizes first
+
+```{r Sample Size including Oaks}
+
+# VTM sample size table ----
+vtm_shade2_sample <- vtm_dbh %>% 
+  filter(!is.na(shade_tolerance2)) %>% 
+  group_by(plotkey, dbh_class, shade_tolerance2) %>% 
+  tally() %>% 
+  mutate(n=as.numeric(n)) %>% 
+  ungroup() %>% 
+  group_by(dbh_class, shade_tolerance2) %>% 
+  tally() %>% # Summarize by sample sizes only
+  mutate(data = "VTM") 
+
+# FIA Sample Size Table ---
+fia_shade2_sample <- fia_dbh %>% 
+  filter(!is.na(shade_tolerance2)) %>% 
+  group_by(join_plot, dbh_class, shade_tolerance2) %>% 
+  tally() %>% 
+  mutate(n=as.numeric(n)) %>% 
+  ungroup() %>% 
+  group_by(dbh_class, shade_tolerance2) %>% 
+  tally() %>% # Summarize by sample sizes only
+  mutate(data = "FIA")
+
+shade2_bind_sample <- rbind(vtm_shade2_sample, fia_shade2_sample)
+
+# Remove sample sizes less than 10
+shade2_bind_sample_final <- shade2_bind_sample %>% 
+   filter(n > 10) # Remove sample sizes less than 10 
+```
+
+No groupings with sample sizes less than 20 or less than 10.
+
+### graph
+```{r}
+########################################  subdata ####################################### 
+
+vtm_shade2 <- vtm_dbh %>% 
+  #filter(!is.na(shade_tolerance2)) %>% 
+  group_by(plotkey, dbh_class, shade_tolerance2) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  mutate(stem_density = n/0.0809) %>%
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  pivot_longer(3:4,
+               names_to = 'shade_tolerance2',
+               values_to = 'stem_density') %>% 
+  group_by(dbh_class, shade_tolerance2) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "VTM") 
+
+
+fia_shade2 <- fia_dbh %>% 
+  group_by(join_plot, dbh_class, shade_tolerance2) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  group_by(dbh_class, shade_tolerance2) %>% 
+  mutate(stem_density = n/0.067245) %>%
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = shade_tolerance2,
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(shade_tolerant_fire_intolerant = replace_na(shade_tolerant_fire_intolerant, 0),
+         shade_intolerant_fire_tolerant = replace_na(shade_intolerant_fire_tolerant, 0)) %>% 
+  pivot_longer(3:4,
+               names_to = 'shade_tolerance2',
+               values_to = 'stem_density') %>% 
+  group_by(dbh_class, shade_tolerance2) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "FIA")
+
+
+shade_bind2 <- rbind(vtm_shade2, fia_shade2)
+########################################  graph ####################################### 
+ggplot(shade_bind2, aes(x=dbh_class, y=avg_stem_density, group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+  geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.3) +
+  facet_wrap(~shade_tolerance2) +
+  theme_classic()+
+  labs(x = "DBH Class (cm)", y = "Average Density (Tree/ha)\n") +
+  scale_y_continuous(lim=c(0,200), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D")) +
+  scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "94+"))
+
+####################################### % change #######################################   
+# pct_change_shade_dbh <- shade_bind2 %>%
+#   select(dbh_class, shade_tolerance2, avg_stem_density, data) %>%
+#   group_by(dbh_class, shade_tolerance2) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_shade_dbh$pct_change
+```
+
+
+# elevation
+
+### Check sample sizes first
+
+```{r Sample Size including Oaks}
+
+# VTM sample size table ----
+vtm_elev_sample <- vtm_dbh %>% 
+  group_by(dbh_class, lifeform, elevation_class) %>% 
+  tally()  
+
+# FIA Sample Size Table ---
+fia_elev_sample <- fia_dbh %>% 
+  group_by(dbh_class, lifeform, elevation_class) %>% 
+  tally() 
+
+elev_bind_sample <- rbind(vtm_elev_sample, fia_elev_sample)
+
+# Remove sample sizes less than 10
+elev_bind_sample_final <- elev_bind_sample %>% 
+   filter(n > 10) # Remove sample sizes less than 10 
+```
+
+No groups with sample size below 20 :)
+
+
+### graph
+```{r Graphs for DBH by elevation for FIA and VTM, warning=F, message=F}
+
+########################################  subdata ####################################### 
+
+vtm_elev <- vtm_dbh %>% 
+  filter(!is.na(elevation_class)) %>%  # one plot did not have elevation
+  group_by(plotkey, dbh_class, elevation_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(stem_density = as.numeric(n)/0.0809) %>%
+  group_by(dbh_class, elevation_class) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "VTM") 
+
+
+fia_elev <- fia_dbh %>% 
+  group_by(join_plot, dbh_class, elevation_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(stem_density = as.numeric(n)/0.0809) %>%
+  group_by(dbh_class, elevation_class) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "FIA")
+
+
+elev_bind <- rbind(vtm_elev, fia_elev)
+
+elev_bind <- elev_bind %>%  
+  mutate(dbh_class = case_when(
+    dbh_class == "x10_2_30_4" ~ "10.2–30.4",
+    dbh_class == "x30_5_60_9" ~ "30.5–60.9",
+    dbh_class == "x61_0_91_3" ~ "61.0–91.3",
+    dbh_class == "x91_4" ~ "91.4+"
+  )) %>% 
+  mutate(dbh_class = as.factor(dbh_class),
+         dbh_class = fct_relevel(dbh_class, levels=c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")))
+########################################  graph ####################################### 
+# format used in hughs NRV
+
+# Create vector for naming DBH classes by facets
+dbh_class_labs <- c("10.2-30.4 cm", "30.5-60.9 cm", "61.0-91.3 cm", "91.4+ cm")
+names(dbh_class_labs) <- c("10.2-30.4", "30.5-60.9", "61.0-91.3", "91.4+")
+
+# Create graph
+ggplot(elev_bind, aes(x = elevation_class, y = avg_stem_density, group=fct_rev(data))) +
+ geom_col(aes(fill = fct_rev(data)), # Switch order of FIA and VTM data
+              position='dodge',
+          color="black") +
+  geom_errorbar(data = elev_bind, # Draw error bars
+                position=position_dodge(width = 0.9),
+                aes(x = elevation_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.08) +
+  geom_point(aes(x = factor(elevation_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  # geom_text(aes(label=round(avg_stem_density, 0), x = dbh_class), 
+  #           position=position_dodge(width = 0.9), 
+  #           vjust = -1.8)+
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  facet_wrap(~dbh_class,
+             #labeller = labeller(dbh_class = dbh_class_labs),
+             scales="free",
+             ncol=1) +
+  labs(title = "Tree Size Class Distribution by Elevation", 
+       x = "Elevation (m)", 
+       y = "Average Density (Tree/ha)") +
+  theme_classic() +
+    theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(1, 5, 5, 5),
+        legend.spacing.y = unit(-0.1, "cm")) +
+  scale_y_continuous(expand=expand_scale(mult= c(0,.1))) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D")) 
+  
+ggsave("elev_test.jpg", width = 5, height=10)# graph doesnt look weird when export it
+
+########################################  graph ####################################### 
+# format bruce would probably recommend
+
+ggplot(elev_bind, aes(x = dbh_class,y = avg_stem_density, group = fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.4)  +
+  facet_wrap(~ elevation_class, nrow=1) +
+  theme_classic()+
+  labs(x = "DBH Class (cm)", y = "Average Density (Tree/ha)\n") +
+  scale_y_continuous(lim=c(0,250), expand=c(0,0), breaks=seq(0,300, by = 50)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 1, hjust = 1),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(1, 5, 5, 5)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+
+ggsave("elev_test2.jpg", width=5, height =10)
+
+####################################### % change #######################################   
+# pct_change_elev_dbh <- elev_bind %>%
+#   select(dbh_class, elevation_class, avg_stem_density, data) %>%
+#   group_by(dbh_class, elevation_class) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_elev_dbh$pct_change
+# 
+# write_csv(pct_change_elev_dbh, "pct_change_elev_dbh.csv")
+```
+
+
+__Troubleshooting tips:__ 
+- finding values between two numbers using between() - https://www.rdocumentation.org/packages/dplyr/versions/0.7.8/topics/between
+- How to wrap axis labels in ggplot2 - https://stackoverflow.com/questions/21878974/auto-wrapping-of-labels-via-labeller-label-wrap-in-ggplot2
+- expand y axis in facet wrap:  scale_y_continuous(expand=expand_scale(mult= c(0,.1)))
+
+Generally, there is higher average stem density in the DBH 4_11 class than in rest of the classes.
+
+- **DBH 4-11:** There is higher average stem density in the VTM data than in the FIA data for the lower two elevations classes. However, FIA stem density is higher in the higher two elevation classes.
+- **DBH 12-23:** There are only small differences between the VTM and FIA classes for the first three elevations classes. However, there is higher FIA average stem density in the 2500+ m elevation class.
+- **DBH 24-35:** There are higher average stem densities in the FIA data for all four elevation classes.
+- **DBH 36+:** The differences in average stem density seems to be small. There seems to be higher VTM stem density in the 1000-1500 m elevation class and slightly higher FIA stem density in the 2000-2500 m elevation class.
+
+# elevation (just oaks)
+
+```{r Graphs for DBH by elevation for FIA and VTM, warning=F, message=F}
+
+########################################  subdata ####################################### 
+
+vtm_elev2 <- vtm_dbh %>% 
+  filter(lifeform == "Oaks") %>% 
+  filter(!is.na(elevation_class)) %>%  # one plot did not have elevation
+  group_by(plotkey, dbh_class, elevation_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  mutate(stem_density = n/0.0809) %>%
+  group_by(dbh_class, elevation_class) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "VTM") 
+
+
+fia_elev2 <- fia_dbh %>% 
+  filter(lifeform == "Oaks") %>% 
+  group_by(join_plot, dbh_class, elevation_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  group_by(dbh_class, elevation_class) %>% 
+  mutate(stem_density = n/0.067245) %>%
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "FIA")
+
+
+elev_bind2 <- rbind(vtm_elev2, fia_elev2)
+
+elev_bind2 <- elev_bind2 %>%  
+  mutate(dbh_class = case_when(
+    dbh_class == "x10_2_30_4" ~ "10.2–30.4",
+    dbh_class == "x30_5_60_9" ~ "30.5–60.9",
+    dbh_class == "x61_0_91_3" ~ "61.0–91.3",
+    dbh_class == "x91_4" ~ "91.4+"
+  )) %>% 
+  mutate(dbh_class = as.factor(dbh_class),
+         dbh_class = fct_relevel(dbh_class, levels=c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")))
+########################################  graph ####################################### 
+# format used in hughs NRV
+
+# Create vector for naming DBH classes by facets
+dbh_class_labs <- c("10.2-30.4 cm", "30.5-60.9 cm", "61.0-91.3 cm", "91.4+ cm")
+names(dbh_class_labs) <- c("10.2-30.4", "30.5-60.9", "61.0-91.3", "91.4+")
+
+# Create graph
+ggplot(elev_bind2,
+       aes(x = elevation_class,
+           y = avg_stem_density, group=fct_rev(data))) +
+ geom_col(aes(fill = fct_rev(data)), # Switch order of FIA and VTM data
+              position='dodge',
+          color="black") +
+  geom_errorbar(data = elev_bind2, # Draw error bars
+                position=position_dodge(width = 0.9),
+                aes(x = elevation_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.08) +
+ # geom_point(aes(x = factor(elevation_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  #geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  # geom_text(aes(label=round(avg_stem_density, 0), x = dbh_class), 
+  #           position=position_dodge(width = 0.9), 
+  #           vjust = -1.8)+
+ # scale_shape_manual(values = 4, labels = "Median", name = "") +
+ # scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  facet_wrap(~dbh_class,
+             scales="free_y",
+             ncol=1) +
+  labs(title = "Average Tree Size Class Distribution by Elevation",
+       subtitle = "",
+       x = "Elevation (m)", 
+       y = "Trees/Hectare") +
+  theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill=NA),
+           axis.title.x = element_text (face = "bold"),
+        axis.title.y = element_text (face = "bold"),
+        plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) +
+        #legend.title = element_blank(),
+        #legend.key.size = unit(0.4, "cm"), # size of the text/key
+        #legend.box.background = element_rect(colour = "black"),
+        #legend.box.margin = margin(1, 5, 5, 5),
+        #legend.spacing.y = unit(-0.1, "cm")) +
+ # scale_y_continuous(lim=c(0,300), expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels = c("Historic", "Current"),name= "Data Source")
+
+  
+ggsave("elev_test.jpg", width = 5, height=6)# graph doesnt look weird when export it
+
+
+
+########################################  graph ####################################### 
+# format bruce would probably recommend
+
+# ggplot(elev_bind, aes(x = dbh_class,y = avg_stem_density, group = fct_rev(data))) +
+#   geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+#   geom_errorbar(position=position_dodge(width=0.9),
+#                 aes(x = dbh_class, 
+#                     ymin = avg_stem_density - se,
+#                     ymax = avg_stem_density + se),
+#                 color = "black",
+#                 width = 0.4)  +
+#   facet_wrap(~ elevation_class, nrow=1, scale_y = "free") +
+#   theme_classic()+
+#   labs(x = "DBH Class (cm)", y = "Average Density (Tree/ha)\n") +
+#   #scale_y_continuous(lim=c(0,250), expand=c(0,0), breaks=seq(0,300, by = 50)) +
+#   theme(panel.border = element_rect(colour = "black", fill=NA),
+#         legend.title = element_blank(),
+#         axis.text.x = element_text(angle = 40, vjust = 1, hjust = 1),
+#         legend.key.size = unit(0.4, "cm"), # size of the text/key
+#         legend.box.background = element_rect(colour = "black"),
+#         legend.box.margin = margin(1, 5, 5, 5)) +
+#   scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+# 
+# ggsave("elev_test2.jpg", width=10, height =3)
+
+####################################### % change #######################################   
+# pct_change_elev_dbh <- elev_bind %>%
+#   select(dbh_class, elevation_class, avg_stem_density, data) %>%
+#   group_by(dbh_class, elevation_class) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_elev_dbh$pct_change
+# 
+# write_csv(pct_change_elev_dbh, "pct_change_elev_dbh.csv")
+```
+
+# elevation (just pines)
+
+```{r Graphs for DBH by elevation for FIA and VTM, warning=F, message=F}
+
+########################################  subdata ####################################### 
+
+vtm_elev2 <- vtm_dbh %>% 
+  filter(lifeform == "Conifers") %>% 
+  filter(!is.na(elevation_class)) %>%  # one plot did not have elevation
+  group_by(plotkey, dbh_class, elevation_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  mutate(stem_density = n/0.0809) %>%
+  group_by(dbh_class, elevation_class) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "VTM") 
+
+
+fia_elev2 <- fia_dbh %>% 
+  filter(lifeform == "Conifers") %>% 
+  group_by(join_plot, dbh_class, elevation_class) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(3:6,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  group_by(dbh_class, elevation_class) %>% 
+  mutate(stem_density = n/0.067245) %>%
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  mutate(data = "FIA")
+
+
+elev_bind2 <- rbind(vtm_elev2, fia_elev2)
+
+elev_bind2 <- elev_bind2 %>%  
+  mutate(dbh_class = case_when(
+    dbh_class == "x10_2_30_4" ~ "10.2–30.4",
+    dbh_class == "x30_5_60_9" ~ "30.5–60.9",
+    dbh_class == "x61_0_91_3" ~ "61.0–91.3",
+    dbh_class == "x91_4" ~ "91.4+"
+  )) %>% 
+  mutate(dbh_class = as.factor(dbh_class),
+         dbh_class = fct_relevel(dbh_class, levels=c("10.2–30.4", "30.5–60.9", "61.0–91.3", "91.4+")))
+########################################  graph ####################################### 
+# format used in hughs NRV
+
+# Create vector for naming DBH classes by facets
+dbh_class_labs <- c("10.2-30.4 cm", "30.5-60.9 cm", "61.0-91.3 cm", "91.4+ cm")
+names(dbh_class_labs) <- c("10.2-30.4", "30.5-60.9", "61.0-91.3", "91.4+")
+
+# Create graph
+ggplot(elev_bind2,
+       aes(x = elevation_class,
+           y = avg_stem_density, group=fct_rev(data))) +
+ geom_col(aes(fill = fct_rev(data)), # Switch order of FIA and VTM data
+              position='dodge',
+          color="black") +
+  geom_errorbar(data = elev_bind2, # Draw error bars
+                position=position_dodge(width = 0.9),
+                aes(x = elevation_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.08) +
+ # geom_point(aes(x = factor(elevation_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  #geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  # geom_text(aes(label=round(avg_stem_density, 0), x = dbh_class), 
+  #           position=position_dodge(width = 0.9), 
+  #           vjust = -1.8)+
+ # scale_shape_manual(values = 4, labels = "Median", name = "") +
+ # scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  facet_wrap(~dbh_class,
+             scales="free_y",
+             ncol=1) +
+  labs(title = "Average Tree Size Class Distribution by Elevation", 
+       subtitle="",
+       x = "Elevation (m)", 
+       y = "Trees/Hectare") +
+  theme_bw() +
+    theme(panel.border = element_rect(colour = "black", fill=NA),
+          axis.title.x = element_text (face = "bold"),
+        axis.title.y = element_text (face = "bold"),
+        plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) + 
+        # legend.title = element_blank(),
+        # legend.key.size = unit(0.4, "cm"), # size of the text/key
+        # legend.box.background = element_rect(colour = "black"),
+        # legend.box.margin = margin(1, 5, 5, 5),
+        # legend.spacing.y = unit(-0.1, "cm")) +
+ # scale_y_continuous(lim=c(0,300), expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), labels = c("Historic", "Current"),name= "Data Source")
+  
+ggsave("elev_test_pines bv  .jpg", width = 5, height=6)# graph doesnt look weird when export it
+
+
+labs(x = "DBH Bins (cm)", y = "Trees/Hectare\n", title = "Average YPMC Tree Density by Size Class", subtitle ="") +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        #legend.title = element_text("Data Source"),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        #legend.box.background = element_rect(colour = "black"),
+       # legend.box.margin = margin(2, 2, 2, 2),
+        #legend.spacing.y = unit(0.3, "cm"),
+        axis.title.x = element_text (face = "bold"),
+        axis.title.y = element_text (face = "bold"),
+        plot.title = element_text(hjust= 0.5,
+                                  face = "bold",
+                                  margin=margin(0,0,10,0))) + #shorten distance between two legends
+  scale_y_continuous(lim=c(0,250),
+                    expand=c(0,0)) +
+
+########################################  graph ####################################### 
+# format bruce would probably recommend
+
+# ggplot(elev_bind, aes(x = dbh_class,y = avg_stem_density, group = fct_rev(data))) +
+#   geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+#   geom_errorbar(position=position_dodge(width=0.9),
+#                 aes(x = dbh_class, 
+#                     ymin = avg_stem_density - se,
+#                     ymax = avg_stem_density + se),
+#                 color = "black",
+#                 width = 0.4)  +
+#   facet_wrap(~ elevation_class, nrow=1, scale_y = "free") +
+#   theme_classic()+
+#   labs(x = "DBH Class (cm)", y = "Average Density (Tree/ha)\n") +
+#   #scale_y_continuous(lim=c(0,250), expand=c(0,0), breaks=seq(0,300, by = 50)) +
+#   theme(panel.border = element_rect(colour = "black", fill=NA),
+#         legend.title = element_blank(),
+#         axis.text.x = element_text(angle = 40, vjust = 1, hjust = 1),
+#         legend.key.size = unit(0.4, "cm"), # size of the text/key
+#         legend.box.background = element_rect(colour = "black"),
+#         legend.box.margin = margin(1, 5, 5, 5)) +
+#   scale_fill_manual(values = c("#8EBB90", "#1D734D"))
+# 
+# ggsave("elev_test2.jpg", width=10, height =3)
+
+####################################### % change #######################################   
+# pct_change_elev_dbh <- elev_bind %>%
+#   select(dbh_class, elevation_class, avg_stem_density, data) %>%
+#   group_by(dbh_class, elevation_class) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_elev_dbh$pct_change
+# 
+# write_csv(pct_change_elev_dbh, "pct_change_elev_dbh.csv")
+```
+
+# aspect
+```{r Graphs for DBH by aspect for FIA and VTM, warning=F, message=F}
+
+# Code also copied from Leana's VTM graphs
+
+# Create FIA data frame
+fia_dbh_aspect <- fia_dbh %>% 
+  group_by(aspect_qualitative, species, dbh_class) %>% 
+  tally() %>% 
+  mutate(stem_density = n/0.0809) %>%
+  group_by(dbh_class, aspect_qualitative) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  rename("aspect" = "aspect_qualitative") %>% # Rename aspect variable to keep things consistent
+  mutate(data = "FIA")
+
+# Create VTM data frame
+vtm_dbh_aspect <- vtm_dbh %>% 
+  group_by(species, exposure, dbh_class) %>% 
+  group_by(dbh_class, exposure) %>% 
+  mutate(stem_density = n/0.067245) %>%
+  summarise(avg_stem_density = mean(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  filter(sample_size > 10) %>%  # Remove sample sizes less than 10 
+  rename("aspect" = "exposure") %>% # Rename aspect variable to keep things consistent
+  mutate(data = "VTM")
+
+# Combine both data frames together  
+dbh_aspect_all <- rbind(vtm_dbh_aspect, fia_dbh_aspect) %>% 
+  drop_na(aspect)
+
+# Create vector to set factor levels
+dbh_aspect_all$aspect <- factor(dbh_aspect_all$aspect, levels = c("N", "NE", "NW","S","SE","SW", "E", "W")) 
+
+# Create graph
+ggplot(dbh_aspect_all, 
+       aes(x = aspect, y = avg_stem_density))+
+  geom_col(aes(fill = fct_rev(data)),
+           position='dodge') +
+  geom_errorbar(data = dbh_aspect_all, # Draw error bars
+                position=position_dodge(width = 0.4),
+                aes(x = aspect, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.08) +
+  facet_wrap(~dbh_class) +
+  labs(title = "Tree Size Class Distribution by Aspect", 
+       x = "Aspect", 
+       y = "Average Stem Density") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust= 0.5,
+                                  size = 15,
+                                  margin=margin(0,0,5,0)),
+    panel.border = element_rect(colour = "black", fill=NA), # Draw borders around facet plots
+    axis.title.x = element_text(face = "bold",
+                                 size = 10,
+                                 margin=margin(5,0,0,0)),
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10),
+    axis.title.y = element_text(face = "bold",
+                                size = 10,
+                                margin=margin(0,5,0,0)),
+    #strip.text = element_text(size=12),
+    legend.background = element_rect(colour = 'black', fill = 'white', linetype='solid'),
+    legend.key.size = unit(0.2, "cm")) +
+  scale_y_continuous(lim=c(0,800), # Increase y-axis scale to 600
+                     expand=c(0,0)) +
+  scale_fill_manual(values = c("#8EBB90", "#1D734D"), # Change to green colors
+                    name="")
+
+####################################### % change #######################################   
+# pct_change_aspect_dbh <- dbh_aspect_all %>%
+#   select(dbh_class, aspect, avg_stem_density, data) %>%
+#   group_by(dbh_class, aspect) %>%
+#   mutate(pct_change = (lag(avg_stem_density)/avg_stem_density-1)*100)
+# 
+# pct_change_aspect_dbh$pct_change
+# 
+# write_csv(pct_change_aspect_dbh, "pct_change_aspect_dbh.csv")
+```
+There was still some weird data graphed even after I dropped NA values in the aspect column. I think it's because I saw some FIA observations have their aspects recorded as "W-NW."
+
+# National Forest
+```{r}
+########################################  subdata ####################################### 
+# calc avg stem density/ size class
+vtm_nf <- vtm_dbh %>% 
+  filter(national_forest != "N") %>% 
+  filter(national_forest_name != "cnf") %>% 
+  mutate(national_forest_name = str_to_upper(national_forest_name)) %>% 
+  group_by(plotkey, dbh_class, national_forest_name) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+ # group_by(dbh_class, lifeform) %>% # position doesnt matter
+  mutate(stem_density = n/0.0809) %>%
+  group_by(dbh_class, national_forest_name) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "VTM") 
+
+fia_nf <- fia_dbh %>% 
+  filter(admin_forest != "Not NF or other NF") %>% 
+  filter(admin_forest != "CNF") %>% 
+  mutate(national_forest_name = case_when(
+    admin_forest == "ANF" ~ "ANF",
+    admin_forest == "CNF" ~ "CNF",
+    admin_forest %in% c("BDF", 'SBNF') ~ "SBNF",
+    admin_forest %in% c("LPF", "LPNF") ~ "LPNF"
+  )) %>% 
+  group_by(join_plot, dbh_class, national_forest_name) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  group_by(dbh_class, national_forest_name) %>% 
+  mutate(stem_density = n/0.067245) %>%
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "FIA")
+
+nf_bind <- rbind(vtm_nf, fia_nf)
+
+########################################  graph ####################################### 
+ggplot(nf_bind, aes(x=dbh_class, y=avg_stem_density, group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+  geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.3) +
+  facet_wrap(~national_forest_name) +
+  theme_classic()+
+  labs(x = "DBH Class (cm)", y = "Average Density (Tree/ha)\n") +
+  #scale_y_continuous(lim=c(0,100), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D")) +
+  scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "94+")) +
+  scale_y_continuous(lim = c(0,225), expand=c(0,0))
+
+
+```
+
+cnf = 2 vtm plots and 4 fia plots
+
+## by species and NF
+```{r}
+#################################### Check sample sizes ################################
+
+# VTM sample size table ----
+vtm_species_sample <- vtm_dbh %>% 
+  filter(national_forest_name %in% c("anf", "lpnf", "sbnf")) %>%
+  filter(species %in% c("ABCO", "CADE", "PILA", "Yellow Pine")) %>% 
+  group_by(dbh_class, national_forest_name, species) %>% 
+  tally() 
+
+# FIA Sample Size Table ---
+fia_species_sample <- fia_dbh %>% 
+  filter(admin_forest %in% c("ANF", "LPNF", "SBNF")) %>% 
+  filter(species %in% c("ABCO", "CADE", "PILA", "Yellow Pine")) %>% 
+  group_by(dbh_class, admin_forest, species) %>% 
+  tally() 
+
+########################################  subdata ####################################### 
+# calc avg stem density/ size class
+vtm_nf_species <- vtm_dbh %>% 
+  filter(national_forest != "N") %>% 
+  filter(national_forest_name != "cnf") %>% 
+  filter(species %in% c("ABCO", "CADE", "PILA", "Yellow Pine")) %>% 
+  mutate(national_forest_name = str_to_upper(national_forest_name)) %>% 
+  group_by(plotkey, dbh_class, national_forest_name, species) %>% 
+  tally() %>% 
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+ # group_by(dbh_class, lifeform) %>% # position doesnt matter
+  mutate(stem_density = n/0.0809) %>%
+  pivot_wider(names_from = species, 
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pila = replace_na(pila, 0),
+         yellow_pine = replace_na(yellow_pine, 0)) %>% 
+  pivot_longer(cade:pila,
+               names_to = "species",
+               values_to = "stem_density") %>% 
+  group_by(dbh_class, national_forest_name, species) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  #unite(temp, c("national_forest_name", "species", "dbh_class"), sep="_", remove=F) # was going to use this to remove groups with sample size less than X but would be easieist to change dbh categories to be the same as original and then store the grousp with small sample sizes in a vector and filter based off of the vector. 
+  mutate(data = "VTM") 
+
+fia_nf_species <- fia_dbh %>% 
+  filter(admin_forest != "Not NF or other NF") %>% 
+  filter(admin_forest != "CNF") %>% 
+  filter(species %in% c("ABCO", "CADE", "PILA", "Yellow Pine")) %>% 
+  mutate(national_forest_name = case_when(
+    admin_forest == "ANF" ~ "ANF",
+    admin_forest == "CNF" ~ "CNF",
+    admin_forest %in% c("BDF", 'SBNF') ~ "SBNF",
+    admin_forest %in% c("LPF", "LPNF") ~ "LPNF"
+  )) %>% 
+  group_by(join_plot, dbh_class, national_forest_name, species) %>% 
+  tally() %>% 
+  filter(n < 10) %>%
+  pivot_wider(names_from = dbh_class,
+              values_from = n) %>% 
+  clean_names() %>% 
+  mutate(x10_2_30_4 = replace_na(x10_2_30_4, "0"),
+         x30_5_60_9 = replace_na(x30_5_60_9, "0"),
+         x61_0_91_3 = replace_na(x61_0_91_3, "0"),
+         x91_4 = replace_na(x91_4, "0")) %>% 
+  pivot_longer(x10_2_30_4:x91_4,
+               names_to = 'dbh_class',
+               values_to = "n") %>% 
+  mutate(n=as.numeric(n)) %>% 
+  mutate(stem_density = n/0.067245) %>%
+  dplyr::select(-n) %>% 
+  pivot_wider(names_from = species, 
+              values_from = stem_density) %>% 
+  clean_names() %>% 
+  mutate(abco = replace_na(abco, 0),
+         cade = replace_na(cade, 0),
+         pila = replace_na(pila, 0),
+         yellow_pine = replace_na(yellow_pine, 0))  %>% 
+  pivot_longer(abco:yellow_pine,
+               names_to = "species",
+               values_to = "stem_density") %>% 
+  group_by(dbh_class, national_forest_name, species) %>% 
+  summarise(avg_stem_density = mean(stem_density),
+            median = median(stem_density),
+            sd = sd(stem_density),
+            se = sd((stem_density) / sqrt(n())),
+            sample_size = n()) %>% 
+  mutate(data = "FIA")
+
+nf_species_bind <- rbind(vtm_nf_species, fia_nf_species)
+
+
+########################################  graph ####################################### 
+ggplot(nf_species_bind, aes(x=dbh_class, y=avg_stem_density, group=fct_rev(data))) +
+  geom_col(aes(fill = fct_rev(data)), position='dodge', color="black") +
+  geom_point(aes(x = factor(dbh_class), y = median, shape = "4"), position=position_dodge(width=0.9)) +
+  geom_point(aes(alpha = ""), position=position_dodge(width=0.9))+ # create point for the mean
+  scale_shape_manual(values = 4, labels = "Median", name = "") +
+  scale_alpha_manual(values = 16, labels = "Mean", name = "") +
+  geom_errorbar(position=position_dodge(width=0.9),
+                aes(x = dbh_class, 
+                    ymin = avg_stem_density - se,
+                    ymax = avg_stem_density + se),
+                color = "black",
+                width = 0.3) +
+ # facet_wrap(~national_forest_name + species) +
+  facet_grid(species ~ national_forest_name, scales = "free_y")+
+  theme_classic()+
+  labs(x = "DBH Class (cm)", y = "Average Density (Tree/ha)\n") +
+  #scale_y_continuous(lim=c(0,100), expand=c(0,0)) +
+  theme(panel.border = element_rect(colour = "black", fill=NA),
+        legend.title = element_blank(),
+        axis.text.x = element_text(angle = 40, vjust = 0.91, hjust = 0.91),
+        legend.key.size = unit(0.4, "cm"), # size of the text/key
+        legend.box.background = element_rect(colour = "black"),
+        legend.box.margin = margin(2, 2, 2, 2),
+        legend.spacing.y = unit(-0.1, "cm")) + #shorten distance between two legends)
+  scale_fill_manual(values = c("#8EBB90", "#1D734D")) +
+  scale_x_discrete(labels = c("10.2-30.4", "30.5-60.9", "61-91.3", "94+")) 
+
+ggsave("nf_specie.jpg", width=10, height=10)
+```
+

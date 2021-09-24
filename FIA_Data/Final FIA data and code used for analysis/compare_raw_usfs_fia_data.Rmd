@@ -1,0 +1,148 @@
+---
+title: "compare"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Compare data form the raw FIA data to the modified FIA data by the usfs remote sensing lab. Both datasheets below have been filtered to include plots with ypmc species
+
+
+```{r}
+library(tidyverse)
+library(janitor)
+```
+
+```{r Read in the original FSVEG data from Kama, warning=F, message=F}
+
+# Note: It's easier for me to combine all four original CSVs into one here to keep things centralized. Besides changing the column names to lower case, recatagorizing some columns as character, and selecting columns, I have not done any data wrangling. This is to keep to the original format as much as possible.
+
+# Read in FSVEG CSVs
+fia_usfs_anf <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/ANF_FSVEG_TXPT_V.csv")
+
+fia_usfs_cnf <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/CNF_FSVEG_TXPT_V.csv")
+
+fia_usfs_lpf <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/LPF_FSVEG_TXPT_V.csv") %>% 
+  mutate(
+    PLOT = as.character(PLOT) # Change plot column from double to character because it's numeric for some reason
+  )
+
+fia_usfs_bdf <- read_csv("G:/Github/gotforestry/R/fia_data_observation/tree_data/BDF_FSVEG_TXPT_V.csv") %>% 
+  mutate(
+    FOREST = as.character(FOREST) # Change plot column from double to character because it's numeric for some reason
+  )
+
+# Combine all into one
+fia_usfs_all <- bind_rows(fia_usfs_anf, fia_usfs_cnf, fia_usfs_lpf, fia_usfs_bdf) %>% 
+  clean_names() %>% 
+  rename("species" = "spec") %>% 
+  select(forest, plot, species, dbhi, crow)
+```
+
+```{r, warning=F, message=F}
+raw <- read_csv("G:/Github/gotforestry/R/final_binded_fia_ypmc_data.csv") %>% 
+  separate(unique_plot, into=c("county", "plot", "year")) %>% 
+  mutate(plot = as.numeric(plot)) %>% 
+  #rename(raw_diameter = dia,
+  #        raw_height = ht,
+  #        raw_year = invyr,
+  #        raw_elev = elev,
+  #        raw_aspect = aspect,
+  #        raw_slope = slope_avg,
+  #        raw_species = species) %>% 
+  mutate(dbh_cm = dbh/2.54) %>% 
+  filter(join_plot == "75717") %>% 
+  #filter(year == "2009") %>% 
+  select(join_plot, species, dbh_cm, year)
+
+usfs <- read_csv("G:/Github/gotforestry/R/fia_final_data/all_nfs_fia_final.csv") %>%  
+  rename(usfs_diameter = dbhi,
+         usfs_height = heig,
+         usfs_year = ddate_year,
+         usfs_elev1 = elev.x,
+         usfs_elev2 = elev.y,
+         usfs_aspect = aspc,
+         usfs_slope = slop,
+         usfs_species = species) %>% 
+  #filter(public_plo == "75717") %>% 
+  select(r5_pltnum, public_plo, usfs_year, usfs_species, usfs_diameter)
+# from fia_final_data.rmd; 197 plots
+
+fia_final <- read_csv("G:/Github/gotforestry/R/final_binded_fia_ypmc_data.csv")
+```
+So i just randomly chose some plots to compare. I removed oaks, psma, adn pico from the raw df bc tose have not been included in the usfs final df yet by jen. Join() wasnt working bc it would make a new row for every coombination of rows in the dfa (so a df with 33 observations in each df would turninto a  joined df of 1221 rows. I didntwant to deal with that so I just made 2 dfs messing with the code above (switched out plot numbers and selected columns) and flipped between them to compare)
+
+plot 57680:
+- species, slope, aspect match up! :) 
+- Elevation was rounded up/down. :|
+- 2 trees in the raw data are missing dbh but those trees in the usfs data hve dbh recorded (pije=17, abco=12). The same two trees can be found in the raw USFS data. The  The ca_trees.csv recorded the pije and abco as dead in 2003 and the diacalc column listed the dbh as 10.52 and 8.86, respectively. :(
+
+plot 83833
+- usfs df has 5 extra abco, one of which had a dbh of 0.1, 13, 17, 17, and 19. Checked the raw usfs and fia datasheets and the raw and fitered usfs data match and the raw and filtered fia data match 
+- p2veg_subplot_spp csv does not list other trees (just shrubs) in the subplots
+
+plot 68295
+- the plot does not show up in the filtered or raw usfs df or the usfs fia shpfile 
+- p2veg_subplot_spp csv does not list other trees in the subplots
+
+plot 92202
+- 4 alive pipo (4 dead) in raw df, but the plot does not show up in the  filtered or raw usfs df or the usfs fia shpfile 
+- p2veg_subplot_spp csv does not list other trees in the subplots
+
+plot 78253
+- 2 extra abco and 1 extra pije in the usfs df; adn usfs has a dbh value for a pico (16) while the raw data lists that pico as dead and has a calculated dbh of 14.59, a previous dbh of 14.5
+- p2veg_subplot_spp csv does not list other trees in the subplots
+
+plot 75717
+- the years differ between the dfs. Raw df=2001 and 2011 (both invyr and measyear have the same years of 2001 and 2011 recorded), usfs df=2008. 
+- more abco in the raw df
+- 1 additional pije in the raw df in 2011, but the same number in 2011
+- AND the dbh's do NOT match up. :( so maybe that is why the # trees and years are different. but then why is the plot # the same?!?!
+- 2 recorded QUKE seedlings/saplings in p2veg_subplot_spp csv
+
+plot 95944
+- 12 additional abco in usfs df, two of which (in the usfs df) have dbh of 0.1 but the other small diamter observations are consistent between the dfs. These extras are also found in the raw USFS df. Shoul still add in the sapling data
+- example of dbhs of some extra trees in the usfs df: 15.0, 15.0, 15.2, 18.0, 19.0, 20.0, 22.0
+- p2veg_subplot_spp csv does not list other trees in the subplots
+
+plot 86669
+- no plot with this name in the usfs data
+
+plot 63668:
+- everything matches :)
+
+plot 63802
+- everything matches :)
+
+plot 82514
+- Thr data just does NOT match up at all between the data sets. The filtered and untouched raw fia match up though....this data did not match up before but now it does...Now there is just an extra quch tree with dbh of 0.1 
+
+
+plot 76099
+- Both the filtered raw FIA and USFS FIA have 12 rows and the species match up. The original USFS data has one extra row with "NA" as the species and 0.1 as dbh. 
+
+plot 80165
+- everything matches :)
+
+plot 96848
+- The filtered raw data has 42 trees, while the filtered USFS data has 44 trees. The filtered USFS data has an extra ABCO of dbh 45.0 and another I (Jen) haven't found yet. The original USFS data has 44 trees.
+
+
+
+for the plot in which there are more trees in the usfs df, I wonder if those were dead trees? but then why wouldnt the fia ppl record it as such?
+
+*diacalc*: (from metadata) Current diameter calculated. If the diameter is unmeasurable (e.g., the tree is cut or dead), the diameter is calculated (in inches) and stored in this variable. Only collected by certain FIA work units 
+
+
+checked these files for potentualy haveing additional tree data:
+
+- *CA_Pv2VEG_SUBPLOT_SPP.csv*: copy and pasted a coulpe plots listed above. Data can contain trees and saplings/seedlings, but it mostly contains info on shrubs, forbs, and grasses and the plots above that were misssing trees comapred to the usfs data did not had trees recorded in the plot in this df
+
+
+- *TREE_WOODLAND_STEMS.csv*: did not contain the plots above in the df
+
+- *GRND_COVER.csv*: does not contain any data
+
+- *DWM_MICROPLOT_FUEL*: just contains info on shrubs and forbs 
